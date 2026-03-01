@@ -24,33 +24,22 @@ type Event struct {
 	HasSnapshot bool     `json:"has_snapshot"`
 }
 
-// Client communicates with the Frigate NVR REST API and the co-located
-// go2rtc instance for WebRTC streaming.
+// Client communicates with the Frigate NVR REST API. WebRTC signaling is
+// proxied through Frigate's built-in go2rtc proxy at /api/go2rtc/webrtc.
 type Client struct {
 	baseURL    string
-	go2rtcURL  string
 	httpClient *http.Client
 }
 
 // New creates a Frigate API client. The baseURL should be the root URL of the
-// Frigate instance (e.g. "http://10.0.1.20:5000"). The go2rtc URL is derived
-// by replacing port 5000 with 8554 in the base URL. Use SetGo2rtcURL to
-// override this default.
+// Frigate instance (e.g. "http://frigate.home.svc.cluster.local:5000").
 func New(baseURL string) *Client {
-	go2rtcURL := strings.Replace(baseURL, ":5000", ":8554", 1)
 	return &Client{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		go2rtcURL: strings.TrimRight(go2rtcURL, "/"),
+		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
-}
-
-// SetGo2rtcURL overrides the default go2rtc URL derived from the Frigate base
-// URL. This is useful when go2rtc runs on a non-standard port.
-func (c *Client) SetGo2rtcURL(u string) {
-	c.go2rtcURL = strings.TrimRight(u, "/")
 }
 
 // GetEvents retrieves detection events from Frigate, optionally filtered by
@@ -170,13 +159,13 @@ func (c *Client) DeleteEvent(eventID string) error {
 	return nil
 }
 
-// ProxyWebRTCOffer sends an SDP offer to the go2rtc instance co-located with
-// Frigate and returns the SDP answer. This is used for establishing WebRTC
-// streams to view live camera feeds.
+// ProxyWebRTCOffer sends an SDP offer through Frigate's go2rtc proxy and
+// returns the SDP answer. This is used for establishing WebRTC streams to
+// view live camera feeds.
 func (c *Client) ProxyWebRTCOffer(camera string, sdpOffer []byte) ([]byte, error) {
 	params := url.Values{}
 	params.Set("src", camera)
-	reqURL := fmt.Sprintf("%s/api/webrtc?%s", c.go2rtcURL, params.Encode())
+	reqURL := fmt.Sprintf("%s/api/go2rtc/webrtc?%s", c.baseURL, params.Encode())
 
 	slog.Debug("proxying webrtc offer", "url", reqURL, "camera", camera)
 

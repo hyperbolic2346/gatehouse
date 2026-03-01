@@ -21,12 +21,14 @@ import (
 
 func main() {
 	cfg := server.Config{
-		Port:        envInt("PORT", 8080),
-		FrontendDir: envStr("FRONTEND_DIR", "../frontend/build"),
-		JWTSecret:   envStr("JWT_SECRET", ""),
-		FrigateURL:  envStr("FRIGATE_URL", "http://frigate.home.svc.cluster.local:5000"),
-		MQTTBroker:  envStr("MQTT_BROKER", "tcp://mosquitto.home.svc.cluster.local:8883"),
-		DBPath:      envStr("DB_PATH", "gatehouse.db"),
+		Port:         envInt("PORT", 8080),
+		FrontendDir:  envStr("FRONTEND_DIR", "../frontend/build"),
+		JWTSecret:    envStr("JWT_SECRET", ""),
+		FrigateURL:   envStr("FRIGATE_URL", "http://frigate.home.svc.cluster.local:5000"),
+		MQTTBroker:   envStr("MQTT_BROKER", "tcp://mosquitto.home.svc.cluster.local:8883"),
+		MQTTUsername: envStr("MQTT_USERNAME", ""),
+		MQTTPassword: envStr("MQTT_PASSWORD", ""),
+		DBPath:       envStr("DB_PATH", "gatehouse.db"),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -59,7 +61,7 @@ func main() {
 	// Connect MQTT in the background so the HTTP server can start
 	// immediately and pass health probes while waiting for the broker.
 	go func() {
-		mqttClient, err := mqttpkg.Connect(cfg.MQTTBroker, func(_ pahomqtt.Client) {
+		mqttClient, err := mqttpkg.Connect(cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword, func(_ pahomqtt.Client) {
 			// OnConnect fires on initial connect and every reconnect.
 			mqttSub.Subscribe()
 			gateCtrl.Subscribe()

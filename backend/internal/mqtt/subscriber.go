@@ -46,22 +46,30 @@ type OnConnectFunc func(client mqtt.Client)
 // are invoked on initial connect and on every reconnect, so subscribers can
 // re-register their subscriptions. The returned client is shared across
 // all components that need MQTT access.
-func Connect(broker string, onConnect ...OnConnectFunc) (mqtt.Client, error) {
+func Connect(broker, username, password string, onConnect ...OnConnectFunc) (mqtt.Client, error) {
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
 		SetClientID("gatehouse").
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
-		SetConnectRetryInterval(reconnectDelay).
-		SetOnConnectHandler(func(c mqtt.Client) {
-			slog.Info("mqtt connected", "broker", broker)
-			for _, fn := range onConnect {
-				fn(c)
-			}
-		}).
-		SetConnectionLostHandler(func(c mqtt.Client, err error) {
-			slog.Warn("mqtt connection lost", "error", err)
-		})
+		SetConnectRetryInterval(reconnectDelay)
+
+	if username != "" {
+		opts.SetUsername(username)
+	}
+	if password != "" {
+		opts.SetPassword(password)
+	}
+
+	opts.SetOnConnectHandler(func(c mqtt.Client) {
+		slog.Info("mqtt connected", "broker", broker)
+		for _, fn := range onConnect {
+			fn(c)
+		}
+	})
+	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
+		slog.Warn("mqtt connection lost", "error", err)
+	})
 
 	client := mqtt.NewClient(opts)
 	token := client.Connect()

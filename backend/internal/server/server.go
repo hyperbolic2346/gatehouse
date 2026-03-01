@@ -19,12 +19,14 @@ import (
 
 // Config holds the configuration for the HTTP server.
 type Config struct {
-	Port        int
-	FrontendDir string
-	JWTSecret   string
-	FrigateURL  string
-	MQTTBroker  string
-	DBPath      string
+	Port         int
+	FrontendDir  string
+	JWTSecret    string
+	FrigateURL   string
+	MQTTBroker   string
+	MQTTUsername string
+	MQTTPassword string
+	DBPath       string
 }
 
 // Server is the main HTTP server for the gatehouse application.

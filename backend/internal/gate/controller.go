@@ -51,8 +51,8 @@ type Controller struct {
 	status map[int]string // gate ID → hold_status string
 }
 
-// New creates a new gate Controller using the provided MQTT client and
-// WebSocket hub for broadcasting status changes.
+// New creates a new gate Controller. The client may be nil initially and
+// set later via SetClient once the MQTT connection is established.
 func New(client mqtt.Client, hub *ws.Hub) *Controller {
 	return &Controller{
 		client: client,
@@ -61,9 +61,19 @@ func New(client mqtt.Client, hub *ws.Hub) *Controller {
 	}
 }
 
+// SetClient updates the MQTT client after a deferred connection.
+func (c *Controller) SetClient(client mqtt.Client) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.client = client
+}
+
 // Subscribe registers the MQTT topic subscriptions for gate status updates.
 // Call this after the MQTT client is connected (e.g. in the OnConnect handler).
 func (c *Controller) Subscribe() {
+	if c.client == nil {
+		return
+	}
 	token := c.client.Subscribe(statusTopicPattern, 1, c.handleStatus)
 	token.Wait()
 	if err := token.Error(); err != nil {
@@ -145,6 +155,9 @@ func (c *Controller) Release(gateID int) error {
 
 // publish sends an MQTT command to the specified gate.
 func (c *Controller) publish(gateID int, command string) error {
+	if c.client == nil {
+		return fmt.Errorf("gate mqtt not connected")
+	}
 	topic := fmt.Sprintf(commandTopicFmt, gateID)
 	token := c.client.Publish(topic, 1, false, command)
 	token.Wait()

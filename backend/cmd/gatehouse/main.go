@@ -51,41 +51,41 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
-	// We need a reference to the subscriber and gate controller for the
-	// OnConnect callback, but they also need the client. Use a two-phase
-	// approach: create them with a nil client, connect MQTT, then set the
-	// real client and trigger initial subscriptions.
-	var mqttSub *mqttpkg.Subscriber
-	var gateCtrl *gate.Controller
+	// Create gate controller and MQTT subscriber. The MQTT client will be
+	// set once the connection is established (in the background).
+	gateCtrl := gate.New(nil, hub)
+	mqttSub := mqttpkg.New(nil, hub, frigateClient)
 
-	onConnect := func(c pahomqtt.Client) {
-		if mqttSub != nil {
+	// Connect MQTT in the background so the HTTP server can start
+	// immediately and pass health probes while waiting for the broker.
+	go func() {
+		mqttClient, err := mqttpkg.Connect(cfg.MQTTBroker, func(_ pahomqtt.Client) {
+			// OnConnect fires on initial connect and every reconnect.
 			mqttSub.Subscribe()
-		}
-		if gateCtrl != nil {
 			gateCtrl.Subscribe()
+		})
+		if err != nil {
+			log.Printf("MQTT connect failed: %v", err)
+			return
 		}
-	}
 
-	mqttClient, err := mqttpkg.Connect(cfg.MQTTBroker, onConnect)
-	if err != nil {
-		log.Fatalf("Failed to connect to MQTT broker: %v", err)
-	}
+		// Update the subscriber and controller with the live client.
+		mqttSub.SetClient(mqttClient)
+		gateCtrl.SetClient(mqttClient)
 
-	// Create subscriber and gate controller with the connected client.
-	mqttSub = mqttpkg.New(mqttClient, hub, frigateClient)
-	gateCtrl = gate.New(mqttClient, hub)
+		// Trigger initial subscriptions.
+		mqttSub.Subscribe()
+		gateCtrl.Subscribe()
 
-	// Trigger initial subscriptions (OnConnect already fired before we
-	// assigned mqttSub/gateCtrl, so we call Subscribe manually now).
-	mqttSub.Subscribe()
-	gateCtrl.Subscribe()
+		log.Println("MQTT connected and subscriptions registered")
 
-	// Wait for MQTT shutdown in background.
-	go mqttSub.Wait(ctx)
+		// Block until shutdown, then disconnect.
+		<-ctx.Done()
+		log.Println("MQTT disconnecting")
+		mqttClient.Disconnect(250)
+	}()
 
-	// Start day-rollover timer. At midnight each day, broadcast a
-	// "day_rollover" event so the frontend can refresh its event list.
+	// Start day-rollover timer.
 	go dayRolloverLoop(hub)
 
 	// Create and start HTTP server.

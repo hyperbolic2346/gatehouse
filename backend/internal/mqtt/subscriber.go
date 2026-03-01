@@ -82,7 +82,8 @@ type Subscriber struct {
 	frigateClient *frigate.Client
 }
 
-// New creates a new MQTT subscriber using the provided shared MQTT client.
+// New creates a new MQTT subscriber. The client may be nil initially and
+// set later via SetClient once the MQTT connection is established.
 func New(client mqtt.Client, hub *ws.Hub, frigateClient *frigate.Client) *Subscriber {
 	return &Subscriber{
 		client:        client,
@@ -91,9 +92,17 @@ func New(client mqtt.Client, hub *ws.Hub, frigateClient *frigate.Client) *Subscr
 	}
 }
 
+// SetClient updates the MQTT client after a deferred connection.
+func (s *Subscriber) SetClient(client mqtt.Client) {
+	s.client = client
+}
+
 // Subscribe registers the Frigate event topic subscription. Call this after
 // the MQTT client is connected (e.g. in the OnConnect handler).
 func (s *Subscriber) Subscribe() {
+	if s.client == nil {
+		return
+	}
 	token := s.client.Subscribe(frigateEventsTopic, 1, s.handleMessage)
 	token.Wait()
 	if err := token.Error(); err != nil {

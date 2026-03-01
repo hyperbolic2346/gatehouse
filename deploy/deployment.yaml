@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatehouse
+  namespace: gate
+  labels:
+    app.kubernetes.io/name: gatehouse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gatehouse
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gatehouse
+    spec:
+      containers:
+        - name: gatehouse
+          image: ghcr.io/hyperbolic2346/gatehouse:latest
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            - name: FRONTEND_DIR
+              value: /app/frontend-dist
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gatehouse-secret
+                  key: jwt-secret
+            - name: FRIGATE_URL
+              value: http://frigate.home.svc.cluster.local:5000
+            - name: MQTT_BROKER
+              value: tcp://mosquitto.home.svc.cluster.local:8883
+            - name: ARDUINO_ADDR
+              value: http://10.0.1.25
+            - name: DB_PATH
+              value: /data/gatehouse.db
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /api/me
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/me
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: gatehouse-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gatehouse-data
+  namespace: gate
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+  storageClassName: local-hostpath

@@ -20,9 +20,13 @@ export interface Event {
 export interface GateStatus {
 	name: string;
 	id: number;
-	state: string;
-	hold_state: string;
-	holder: string;
+	hold_status: string;
+}
+
+let unauthorizedCallback: (() => void) | null = null;
+
+export function setOnUnauthorized(cb: () => void) {
+	unauthorizedCallback = cb;
 }
 
 class ApiClient {
@@ -33,7 +37,7 @@ class ApiClient {
 			...options
 		});
 		if (res.status === 401) {
-			window.location.href = '/login';
+			unauthorizedCallback?.();
 			throw new Error('Unauthorized');
 		}
 		if (!res.ok) {

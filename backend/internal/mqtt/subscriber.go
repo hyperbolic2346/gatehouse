@@ -38,36 +38,26 @@ type eventMessage struct {
 	Data frigate.Event `json:"data"`
 }
 
-// Subscriber listens to MQTT messages from Frigate and broadcasts them to
-// connected WebSocket clients.
-type Subscriber struct {
-	broker        string
-	hub           *ws.Hub
-	frigateClient *frigate.Client
-}
+// OnConnectFunc is called when the MQTT client connects or reconnects.
+// Subscribers can register their topic subscriptions in this callback.
+type OnConnectFunc func(client mqtt.Client)
 
-// New creates a new MQTT subscriber. The broker should be a URL like
-// "tcp://10.0.1.20:1883".
-func New(broker string, hub *ws.Hub, frigateClient *frigate.Client) *Subscriber {
-	return &Subscriber{
-		broker:        broker,
-		hub:           hub,
-		frigateClient: frigateClient,
-	}
-}
-
-// Start connects to the MQTT broker and subscribes to Frigate event topics.
-// It blocks until the provided context is cancelled.
-func (s *Subscriber) Start(ctx context.Context) error {
+// Connect creates and connects a shared MQTT client. The onConnect callbacks
+// are invoked on initial connect and on every reconnect, so subscribers can
+// re-register their subscriptions. The returned client is shared across
+// all components that need MQTT access.
+func Connect(broker string, onConnect ...OnConnectFunc) (mqtt.Client, error) {
 	opts := mqtt.NewClientOptions().
-		AddBroker(s.broker).
+		AddBroker(broker).
 		SetClientID("gatehouse").
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(reconnectDelay).
 		SetOnConnectHandler(func(c mqtt.Client) {
-			slog.Info("mqtt connected", "broker", s.broker)
-			s.subscribe(c)
+			slog.Info("mqtt connected", "broker", broker)
+			for _, fn := range onConnect {
+				fn(c)
+			}
 		}).
 		SetConnectionLostHandler(func(c mqtt.Client, err error) {
 			slog.Warn("mqtt connection lost", "error", err)
@@ -77,28 +67,47 @@ func (s *Subscriber) Start(ctx context.Context) error {
 	token := client.Connect()
 	token.Wait()
 	if err := token.Error(); err != nil {
-		return fmt.Errorf("mqtt connect: %w", err)
+		return nil, fmt.Errorf("mqtt connect: %w", err)
 	}
 
-	slog.Info("mqtt subscriber started", "broker", s.broker)
-
-	// Block until the context is done, then disconnect gracefully.
-	<-ctx.Done()
-	slog.Info("mqtt subscriber shutting down")
-	client.Disconnect(250)
-	return nil
+	slog.Info("mqtt client started", "broker", broker)
+	return client, nil
 }
 
-// subscribe sets up the topic subscriptions. It is called on initial connect
-// and on every reconnect.
-func (s *Subscriber) subscribe(client mqtt.Client) {
-	token := client.Subscribe(frigateEventsTopic, 1, s.handleMessage)
+// Subscriber listens to MQTT messages from Frigate and broadcasts them to
+// connected WebSocket clients.
+type Subscriber struct {
+	client        mqtt.Client
+	hub           *ws.Hub
+	frigateClient *frigate.Client
+}
+
+// New creates a new MQTT subscriber using the provided shared MQTT client.
+func New(client mqtt.Client, hub *ws.Hub, frigateClient *frigate.Client) *Subscriber {
+	return &Subscriber{
+		client:        client,
+		hub:           hub,
+		frigateClient: frigateClient,
+	}
+}
+
+// Subscribe registers the Frigate event topic subscription. Call this after
+// the MQTT client is connected (e.g. in the OnConnect handler).
+func (s *Subscriber) Subscribe() {
+	token := s.client.Subscribe(frigateEventsTopic, 1, s.handleMessage)
 	token.Wait()
 	if err := token.Error(); err != nil {
 		slog.Error("mqtt subscribe failed", "topic", frigateEventsTopic, "error", err)
 		return
 	}
 	slog.Info("mqtt subscribed", "topic", frigateEventsTopic)
+}
+
+// Wait blocks until the provided context is cancelled, then disconnects.
+func (s *Subscriber) Wait(ctx context.Context) {
+	<-ctx.Done()
+	slog.Info("mqtt subscriber shutting down")
+	s.client.Disconnect(250)
 }
 
 // handleMessage processes a single MQTT message from the frigate/events topic.

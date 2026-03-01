@@ -9,10 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
+
 	"github.com/hyperbolic2346/gatehouse/internal/db"
 	"github.com/hyperbolic2346/gatehouse/internal/frigate"
 	"github.com/hyperbolic2346/gatehouse/internal/gate"
-	"github.com/hyperbolic2346/gatehouse/internal/mqtt"
+	mqttpkg "github.com/hyperbolic2346/gatehouse/internal/mqtt"
 	"github.com/hyperbolic2346/gatehouse/internal/server"
 	"github.com/hyperbolic2346/gatehouse/internal/ws"
 )
@@ -24,7 +26,6 @@ func main() {
 		JWTSecret:   envStr("JWT_SECRET", ""),
 		FrigateURL:  envStr("FRIGATE_URL", "http://frigate.home.svc.cluster.local:5000"),
 		MQTTBroker:  envStr("MQTT_BROKER", "tcp://mosquitto.home.svc.cluster.local:8883"),
-		ArduinoAddr: envStr("ARDUINO_ADDR", "http://10.0.1.25"),
 		DBPath:      envStr("DB_PATH", "gatehouse.db"),
 	}
 
@@ -50,17 +51,38 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
-	// Start MQTT subscriber in background.
-	mqttSub := mqtt.New(cfg.MQTTBroker, hub, frigateClient)
-	go func() {
-		if err := mqttSub.Start(ctx); err != nil {
-			log.Printf("MQTT subscriber error: %v", err)
-		}
-	}()
+	// We need a reference to the subscriber and gate controller for the
+	// OnConnect callback, but they also need the client. Use a two-phase
+	// approach: create them with a nil client, connect MQTT, then set the
+	// real client and trigger initial subscriptions.
+	var mqttSub *mqttpkg.Subscriber
+	var gateCtrl *gate.Controller
 
-	// Start gate status polling in background (poll every 5 seconds).
-	gateCtrl := gate.New(cfg.ArduinoAddr)
-	go gateCtrl.StartPolling(ctx, hub, 5*time.Second)
+	onConnect := func(c pahomqtt.Client) {
+		if mqttSub != nil {
+			mqttSub.Subscribe()
+		}
+		if gateCtrl != nil {
+			gateCtrl.Subscribe()
+		}
+	}
+
+	mqttClient, err := mqttpkg.Connect(cfg.MQTTBroker, onConnect)
+	if err != nil {
+		log.Fatalf("Failed to connect to MQTT broker: %v", err)
+	}
+
+	// Create subscriber and gate controller with the connected client.
+	mqttSub = mqttpkg.New(mqttClient, hub, frigateClient)
+	gateCtrl = gate.New(mqttClient, hub)
+
+	// Trigger initial subscriptions (OnConnect already fired before we
+	// assigned mqttSub/gateCtrl, so we call Subscribe manually now).
+	mqttSub.Subscribe()
+	gateCtrl.Subscribe()
+
+	// Wait for MQTT shutdown in background.
+	go mqttSub.Wait(ctx)
 
 	// Start day-rollover timer. At midnight each day, broadcast a
 	// "day_rollover" event so the frontend can refresh its event list.

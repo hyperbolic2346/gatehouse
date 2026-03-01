@@ -24,7 +24,6 @@ type Config struct {
 	JWTSecret   string
 	FrigateURL  string
 	MQTTBroker  string
-	ArduinoAddr string
 	DBPath      string
 }
 

@@ -1,8 +1,14 @@
 import { writable } from 'svelte/store';
-import { api, type User } from '../api';
+import { api, setOnUnauthorized, type User } from '../api';
 
 export const user = writable<User | null>(null);
 export const loading = writable(true);
+
+// When any API call gets a 401, clear the user store so the layout
+// reactively redirects to /login (no hard page reload).
+setOnUnauthorized(() => {
+	user.set(null);
+});
 
 export async function checkAuth(): Promise<boolean> {
 	try {

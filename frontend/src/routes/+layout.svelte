@@ -12,16 +12,28 @@
 	let isLoading = $derived($loading);
 
 	onMount(async () => {
+		// On the login page, skip the auth check — just mark loading done.
+		if (page.url.pathname === '/login') {
+			loading.set(false);
+			return;
+		}
+
 		const authed = await checkAuth();
-		if (!authed && page.url.pathname !== '/login') {
-			goto('/login');
-		} else if (authed) {
+		if (authed) {
 			connect();
 		}
 	});
 
 	onDestroy(() => {
 		disconnect();
+	});
+
+	// Reactive redirect: whenever user becomes null (initial load or
+	// mid-session token expiry) and we're not on /login, navigate there.
+	$effect(() => {
+		if (!isLoading && !currentUser && page.url.pathname !== '/login') {
+			goto('/login');
+		}
 	});
 
 	async function handleLogout() {

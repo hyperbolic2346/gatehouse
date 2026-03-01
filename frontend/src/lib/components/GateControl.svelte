@@ -33,22 +33,11 @@
 		}
 	}
 
-	function stateColor(state: string): string {
-		switch (state) {
-			case 'OPEN':
-				return 'bg-green-500';
-			case 'CLOSED':
-				return 'bg-red-500';
-			case 'MOVING':
-				return 'bg-yellow-500';
-			default:
-				return 'bg-gray-500';
-		}
-	}
-
-	function holdColor(holdState: string): string {
-		if (holdState === 'HELD BY US') return 'text-yellow-400';
-		return 'text-gray-500';
+	function holdColor(holdStatus: string): string {
+		const lower = holdStatus.toLowerCase();
+		if (lower.includes('held') || lower.includes('hold')) return 'text-yellow-400';
+		if (lower === 'unknown') return 'text-gray-600';
+		return 'text-green-400';
 	}
 </script>
 
@@ -57,14 +46,10 @@
 		{#if canOperateGate(currentUser, gate.name)}
 			<div class="flex items-center gap-3 rounded bg-gray-800 p-3">
 				<div class="flex items-center gap-2">
-					<span class="h-3 w-3 rounded-full {stateColor(gate.state)}"></span>
 					<span class="w-20 font-medium text-white">{gate.name}</span>
 				</div>
 				<div class="flex flex-1 items-center gap-2">
-					<span class="text-xs text-gray-400">{gate.state}</span>
-					{#if gate.hold_state !== 'NOT HELD'}
-						<span class="text-xs {holdColor(gate.hold_state)}">{gate.hold_state}</span>
-					{/if}
+					<span class="text-xs {holdColor(gate.hold_status)}">{gate.hold_status}</span>
 				</div>
 				{#if isMobile}
 					<select
@@ -74,7 +59,7 @@
 							(e.target as HTMLSelectElement).value = '';
 						}}
 						class="rounded bg-gray-700 px-2 py-1 text-sm text-white"
-						disabled={gate.state === 'MOVING' || actionInProgress !== null}
+						disabled={actionInProgress !== null}
 					>
 						<option value="">Action...</option>
 						<option value="open">Open</option>
@@ -86,7 +71,7 @@
 						{#each ['open', 'hold', 'release'] as action}
 							<button
 								onclick={() => performAction(gate.id, action as 'open' | 'hold' | 'release')}
-								disabled={gate.state === 'MOVING' || actionInProgress === `${gate.id}-${action}`}
+								disabled={actionInProgress === `${gate.id}-${action}`}
 								class="rounded bg-gray-700 px-3 py-1 text-xs font-medium text-gray-200 capitalize hover:bg-gray-600 disabled:opacity-50"
 							>
 								{action}

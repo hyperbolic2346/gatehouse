@@ -24,78 +24,85 @@
 
 			const ws = new WebSocket(wsUrl);
 			websockets[index] = ws;
-
 			ws.binaryType = 'arraybuffer';
 
-			const mediaSource = new MediaSource();
 			const video = videoElements[index];
 			if (!video) {
 				streamErrors[index] = 'Video element not ready';
 				return;
 			}
 
+			const mediaSource = new MediaSource();
 			video.src = URL.createObjectURL(mediaSource);
 
 			let sourceBuffer: SourceBuffer | null = null;
 			let bufferQueue: ArrayBuffer[] = [];
-			let cleanup = () => {
+
+			mediaSourceCleanups[index] = () => {
 				ws.close();
 				if (video.src) {
 					URL.revokeObjectURL(video.src);
 					video.src = '';
 				}
 			};
-			mediaSourceCleanups[index] = cleanup;
 
-			mediaSource.addEventListener('sourceopen', () => {
-				// The first text message from go2rtc contains the codec info
-				// in the format: {"type":"mse","value":"codec1,codec2,..."}
-			});
+			function initSourceBuffer(mimeType: string) {
+				if (!MediaSource.isTypeSupported(mimeType)) {
+					streamErrors[index] = `Unsupported codec: ${mimeType}`;
+					ws.close();
+					return;
+				}
+
+				sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+				sourceBuffer.mode = 'segments';
+
+				sourceBuffer.addEventListener('updateend', () => {
+					if (bufferQueue.length > 0 && sourceBuffer && !sourceBuffer.updating) {
+						sourceBuffer.appendBuffer(bufferQueue.shift()!);
+					}
+
+					// Trim buffer to prevent unbounded growth
+					if (sourceBuffer && !sourceBuffer.updating && video.buffered.length > 0) {
+						const end = video.buffered.end(video.buffered.length - 1);
+						const start = video.buffered.start(0);
+						if (end - start > 60) {
+							sourceBuffer.remove(start, end - 30);
+						}
+					}
+				});
+
+				// Flush queued data
+				if (bufferQueue.length > 0 && !sourceBuffer.updating) {
+					sourceBuffer.appendBuffer(bufferQueue.shift()!);
+				}
+			}
+
+			ws.onopen = () => {
+				// Tell go2rtc we want MSE streaming
+				ws.send(JSON.stringify({ type: 'mse' }));
+			};
 
 			ws.onmessage = (event) => {
 				if (typeof event.data === 'string') {
-					// JSON control message from go2rtc
 					try {
 						const msg = JSON.parse(event.data);
 						if (msg.type === 'mse') {
-							// msg.value contains the codecs string
-							const codecs = msg.value;
-							const mimeType = `video/mp4; codecs="${codecs}"`;
-
-							if (!MediaSource.isTypeSupported(mimeType)) {
-								streamErrors[index] = `Unsupported codec: ${codecs}`;
-								ws.close();
-								return;
-							}
-
-							sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-							sourceBuffer.mode = 'segments';
-
-							sourceBuffer.addEventListener('updateend', () => {
-								if (bufferQueue.length > 0 && sourceBuffer && !sourceBuffer.updating) {
-									sourceBuffer.appendBuffer(bufferQueue.shift()!);
-								}
-
-								// Keep buffer from growing too large - trim to last 30s
-								if (sourceBuffer && !sourceBuffer.updating && video.buffered.length > 0) {
-									const end = video.buffered.end(video.buffered.length - 1);
-									const start = video.buffered.start(0);
-									if (end - start > 60) {
-										sourceBuffer.remove(start, end - 30);
-									}
-								}
-							});
-
-							// Flush any data that arrived before sourceBuffer was ready
-							if (bufferQueue.length > 0 && !sourceBuffer.updating) {
-								sourceBuffer.appendBuffer(bufferQueue.shift()!);
+							// Server responds with MIME type like:
+							// "video/mp4; codecs=\"avc1.64001F,mp4a.40.2\""
+							const mimeType = msg.value;
+							if (mediaSource.readyState === 'open') {
+								initSourceBuffer(mimeType);
+							} else {
+								mediaSource.addEventListener('sourceopen', () => {
+									initSourceBuffer(mimeType);
+								});
 							}
 						}
 					} catch {
 						// Ignore unparseable messages
 					}
 				} else {
-					// Binary data - MSE media segment
+					// Binary MP4 segment data
 					const data = event.data as ArrayBuffer;
 					if (sourceBuffer && !sourceBuffer.updating) {
 						try {

@@ -47,7 +47,7 @@ func New(baseURL string) *Client {
 func (c *Client) GetEvents(camera string, before, after int64) ([]Event, error) {
 	params := url.Values{}
 	if camera != "" {
-		params.Set("camera", camera)
+		params.Set("cameras", camera)
 	}
 	if before > 0 {
 		params.Set("before", fmt.Sprintf("%d", before))
@@ -167,7 +167,7 @@ func (c *Client) ProxyWebRTCOffer(camera string, sdpOffer []byte) ([]byte, error
 	params.Set("src", camera)
 	reqURL := fmt.Sprintf("%s/api/go2rtc/webrtc?%s", c.baseURL, params.Encode())
 
-	slog.Debug("proxying webrtc offer", "url", reqURL, "camera", camera)
+	slog.Info("proxying webrtc offer", "url", reqURL, "camera", camera, "offer_len", len(sdpOffer))
 
 	resp, err := c.httpClient.Post(reqURL, "application/sdp", strings.NewReader(string(sdpOffer)))
 	if err != nil {
@@ -185,5 +185,6 @@ func (c *Client) ProxyWebRTCOffer(camera string, sdpOffer []byte) ([]byte, error
 		return nil, fmt.Errorf("go2rtc read answer: %w", err)
 	}
 
+	slog.Info("webrtc answer received", "camera", camera, "status", resp.StatusCode, "answer_len", len(answer))
 	return answer, nil
 }

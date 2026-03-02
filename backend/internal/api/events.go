@@ -19,6 +19,9 @@ type EventsHandler struct {
 // If no date is provided, today is used.
 func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 	camera := r.URL.Query().Get("camera")
+	if camera == "" {
+		camera = "gate,gate-rear"
+	}
 	dateStr := r.URL.Query().Get("date")
 
 	var after, before int64

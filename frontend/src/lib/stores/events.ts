@@ -5,6 +5,7 @@ export const events = writable<Event[]>([]);
 export const selectedDate = writable<string>(todayString());
 export const selectedCamera = writable<string>('');
 export const eventsLoading = writable(false);
+export const eventsError = writable<string | null>(null);
 
 function todayString(): string {
 	const d = new Date();
@@ -15,13 +16,15 @@ function todayString(): string {
 
 export async function fetchEvents() {
 	eventsLoading.set(true);
+	eventsError.set(null);
 	try {
 		const date = get(selectedDate);
 		const camera = get(selectedCamera);
 		const result = await api.getEvents(date, camera || undefined);
 		events.set(result || []);
-	} catch {
+	} catch (err) {
 		events.set([]);
+		eventsError.set(err instanceof Error ? err.message : 'Failed to load events');
 	} finally {
 		eventsLoading.set(false);
 	}

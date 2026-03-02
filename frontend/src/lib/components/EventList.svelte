@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { events, eventsLoading, fetchEvents } from '$lib/stores/events';
+	import { events, eventsLoading, eventsError, fetchEvents } from '$lib/stores/events';
 	import { api, type Event } from '$lib/api';
 	import EventCard from './EventCard.svelte';
 
 	let eventList = $derived($events);
 	let loading = $derived($eventsLoading);
+	let error = $derived($eventsError);
 	let clipModal = $state<Event | null>(null);
 
 	async function handleDelete(id: string) {
@@ -30,6 +31,17 @@
 
 {#if loading}
 	<div class="py-8 text-center text-gray-400">Loading events...</div>
+{:else if error}
+	<div class="py-8 text-center">
+		<p class="text-red-400">Failed to load events</p>
+		<p class="mt-1 text-sm text-gray-500">{error}</p>
+		<button
+			onclick={() => fetchEvents()}
+			class="mt-2 rounded bg-gray-700 px-3 py-1 text-sm text-gray-300 hover:bg-gray-600"
+		>
+			Retry
+		</button>
+	</div>
 {:else if eventList.length === 0}
 	<div class="py-8 text-center text-gray-500">No events for this day</div>
 {:else}

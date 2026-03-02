@@ -10,11 +10,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// StreamHandler proxies WebSocket connections to Frigate's go2rtc instance
-// for MSE (Media Source Extensions) live streaming. This avoids the need for
-// direct WebRTC UDP connectivity between the browser and go2rtc.
+// StreamHandler proxies WebSocket connections to go2rtc for MSE (Media Source
+// Extensions) live streaming. This avoids the need for direct WebRTC UDP
+// connectivity between the browser and go2rtc.
 type StreamHandler struct {
-	FrigateURL string
+	Go2rtcURL string // e.g. "http://frigate.home.svc.cluster.local:1984"
 }
 
 var streamUpgrader = websocket.Upgrader{
@@ -45,8 +45,8 @@ func (h *StreamHandler) ProxyMSE(w http.ResponseWriter, r *http.Request) {
 	}
 	defer clientConn.Close()
 
-	// Build go2rtc WebSocket URL from the Frigate base URL.
-	go2rtcURL, err := buildGo2rtcWSURL(h.FrigateURL, camera)
+	// Build go2rtc WebSocket URL.
+	go2rtcURL, err := buildGo2rtcWSURL(h.Go2rtcURL, camera)
 	if err != nil {
 		slog.Error("stream: invalid frigate url", "error", err)
 		clientConn.WriteMessage(websocket.CloseMessage,
@@ -115,10 +115,10 @@ func (h *StreamHandler) ProxyMSE(w http.ResponseWriter, r *http.Request) {
 	<-done
 }
 
-// buildGo2rtcWSURL converts the Frigate HTTP URL to a go2rtc WebSocket URL.
-// e.g. "http://frigate:5000" → "ws://frigate:5000/api/go2rtc/ws?src=gate"
-func buildGo2rtcWSURL(frigateURL, camera string) (string, error) {
-	u, err := url.Parse(frigateURL)
+// buildGo2rtcWSURL converts a go2rtc HTTP base URL to a WebSocket URL.
+// e.g. "http://frigate:1984" → "ws://frigate:1984/api/ws?src=gate"
+func buildGo2rtcWSURL(baseURL, camera string) (string, error) {
+	u, err := url.Parse(baseURL)
 	if err != nil {
 		return "", err
 	}
@@ -133,8 +133,7 @@ func buildGo2rtcWSURL(frigateURL, camera string) (string, error) {
 	params := url.Values{}
 	params.Set("src", camera)
 
-	// Frigate proxies go2rtc's API at /api/go2rtc/
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/go2rtc/ws"
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/ws"
 	u.RawQuery = params.Encode()
 
 	return u.String(), nil

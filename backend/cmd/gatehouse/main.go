@@ -25,6 +25,7 @@ func main() {
 		FrontendDir:  envStr("FRONTEND_DIR", "../frontend/build"),
 		JWTSecret:    envStr("JWT_SECRET", ""),
 		FrigateURL:   envStr("FRIGATE_URL", "http://frigate.home.svc.cluster.local:5000"),
+		Go2rtcURL:    envStr("GO2RTC_URL", "http://frigate.home.svc.cluster.local:1984"),
 		MQTTBroker:   envStr("MQTT_BROKER", "tcp://mosquitto.home.svc.cluster.local:8883"),
 		MQTTUsername: envStr("MQTT_USERNAME", ""),
 		MQTTPassword: envStr("MQTT_PASSWORD", ""),

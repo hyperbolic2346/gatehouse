@@ -23,6 +23,7 @@ type Config struct {
 	FrontendDir  string
 	JWTSecret    string
 	FrigateURL   string
+	Go2rtcURL    string
 	MQTTBroker   string
 	MQTTUsername string
 	MQTTPassword string
@@ -77,7 +78,7 @@ func (s *Server) Start() error {
 	mux.Handle("GET /api/events/{id}/clip.mp4", authMW(http.HandlerFunc(eventsHandler.Clip)))
 
 	// Live streams (MSE over WebSocket, proxied to go2rtc)
-	streamHandler := &api.StreamHandler{FrigateURL: s.cfg.FrigateURL}
+	streamHandler := &api.StreamHandler{Go2rtcURL: s.cfg.Go2rtcURL}
 	mux.Handle("GET /api/stream/mse", authMW(http.HandlerFunc(streamHandler.ProxyMSE)))
 
 	// WebRTC (kept as fallback)

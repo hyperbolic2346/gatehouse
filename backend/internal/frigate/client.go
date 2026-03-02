@@ -59,7 +59,7 @@ func (c *Client) GetEvents(camera string, before, after int64) ([]Event, error) 
 	params.Set("include_thumbnails", "0")
 
 	reqURL := fmt.Sprintf("%s/api/events?%s", c.baseURL, params.Encode())
-	slog.Debug("fetching frigate events", "url", reqURL)
+	slog.Info("fetching frigate events", "url", reqURL)
 
 	resp, err := c.httpClient.Get(reqURL)
 	if err != nil {
@@ -77,7 +77,7 @@ func (c *Client) GetEvents(camera string, before, after int64) ([]Event, error) 
 		return nil, fmt.Errorf("frigate decode events: %w", err)
 	}
 
-	slog.Debug("fetched frigate events", "count", len(events))
+	slog.Info("fetched frigate events", "count", len(events))
 	return events, nil
 }
 

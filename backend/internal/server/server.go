@@ -76,7 +76,11 @@ func (s *Server) Start() error {
 	mux.Handle("GET /api/events/{id}/thumbnail.jpg", authMW(http.HandlerFunc(eventsHandler.Thumbnail)))
 	mux.Handle("GET /api/events/{id}/clip.mp4", authMW(http.HandlerFunc(eventsHandler.Clip)))
 
-	// WebRTC
+	// Live streams (MSE over WebSocket, proxied to go2rtc)
+	streamHandler := &api.StreamHandler{FrigateURL: s.cfg.FrigateURL}
+	mux.Handle("GET /api/stream/mse", authMW(http.HandlerFunc(streamHandler.ProxyMSE)))
+
+	// WebRTC (kept as fallback)
 	mux.Handle("POST /api/webrtc/offer", authMW(http.HandlerFunc(eventsHandler.WebRTCOffer)))
 
 	// Gates

@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api } from '$lib/api';
 	import CameraToggle from './CameraToggle.svelte';
 
 	const cameras = ['gate', 'gate-rear'];
 	let activeCamera = $state(0);
 	let videoElements: HTMLVideoElement[] = $state([]);
-	let peerConnections: RTCPeerConnection[] = [];
 	let streamErrors: (string | null)[] = $state([null, null]);
+	let websockets: (WebSocket | null)[] = [null, null];
+	let mediaSourceCleanups: (() => void)[] = [];
 	let isMobile = $state(false);
 
 	function checkMobile() {
@@ -19,53 +19,121 @@
 		streamErrors[index] = null;
 
 		try {
-			const pc = new RTCPeerConnection({
-				iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+			const wsUrl = `${protocol}//${window.location.host}/api/stream/mse?camera=${camera}`;
+
+			const ws = new WebSocket(wsUrl);
+			websockets[index] = ws;
+
+			ws.binaryType = 'arraybuffer';
+
+			const mediaSource = new MediaSource();
+			const video = videoElements[index];
+			if (!video) {
+				streamErrors[index] = 'Video element not ready';
+				return;
+			}
+
+			video.src = URL.createObjectURL(mediaSource);
+
+			let sourceBuffer: SourceBuffer | null = null;
+			let bufferQueue: ArrayBuffer[] = [];
+			let cleanup = () => {
+				ws.close();
+				if (video.src) {
+					URL.revokeObjectURL(video.src);
+					video.src = '';
+				}
+			};
+			mediaSourceCleanups[index] = cleanup;
+
+			mediaSource.addEventListener('sourceopen', () => {
+				// The first text message from go2rtc contains the codec info
+				// in the format: {"type":"mse","value":"codec1,codec2,..."}
 			});
-			peerConnections[index] = pc;
 
-			pc.addTransceiver('video', { direction: 'recvonly' });
-			pc.addTransceiver('audio', { direction: 'recvonly' });
+			ws.onmessage = (event) => {
+				if (typeof event.data === 'string') {
+					// JSON control message from go2rtc
+					try {
+						const msg = JSON.parse(event.data);
+						if (msg.type === 'mse') {
+							// msg.value contains the codecs string
+							const codecs = msg.value;
+							const mimeType = `video/mp4; codecs="${codecs}"`;
 
-			pc.ontrack = (event) => {
-				if (videoElements[index] && event.streams[0]) {
-					videoElements[index].srcObject = event.streams[0];
-				}
-			};
+							if (!MediaSource.isTypeSupported(mimeType)) {
+								streamErrors[index] = `Unsupported codec: ${codecs}`;
+								ws.close();
+								return;
+							}
 
-			pc.onconnectionstatechange = () => {
-				if (pc.connectionState === 'failed') {
-					streamErrors[index] = 'Connection failed';
-				}
-			};
+							sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+							sourceBuffer.mode = 'segments';
 
-			const offer = await pc.createOffer();
-			await pc.setLocalDescription(offer);
+							sourceBuffer.addEventListener('updateend', () => {
+								if (bufferQueue.length > 0 && sourceBuffer && !sourceBuffer.updating) {
+									sourceBuffer.appendBuffer(bufferQueue.shift()!);
+								}
 
-			// Wait for ICE gathering
-			await new Promise<void>((resolve) => {
-				if (pc.iceGatheringState === 'complete') {
-					resolve();
+								// Keep buffer from growing too large - trim to last 30s
+								if (sourceBuffer && !sourceBuffer.updating && video.buffered.length > 0) {
+									const end = video.buffered.end(video.buffered.length - 1);
+									const start = video.buffered.start(0);
+									if (end - start > 60) {
+										sourceBuffer.remove(start, end - 30);
+									}
+								}
+							});
+
+							// Flush any data that arrived before sourceBuffer was ready
+							if (bufferQueue.length > 0 && !sourceBuffer.updating) {
+								sourceBuffer.appendBuffer(bufferQueue.shift()!);
+							}
+						}
+					} catch {
+						// Ignore unparseable messages
+					}
 				} else {
-					pc.onicegatheringstatechange = () => {
-						if (pc.iceGatheringState === 'complete') resolve();
-					};
-					setTimeout(resolve, 2000);
+					// Binary data - MSE media segment
+					const data = event.data as ArrayBuffer;
+					if (sourceBuffer && !sourceBuffer.updating) {
+						try {
+							sourceBuffer.appendBuffer(data);
+						} catch {
+							bufferQueue.push(data);
+						}
+					} else {
+						bufferQueue.push(data);
+					}
 				}
-			});
+			};
 
-			const answer = await api.webrtcOffer(camera, pc.localDescription!);
-			await pc.setRemoteDescription(answer);
+			ws.onerror = () => {
+				streamErrors[index] = 'Connection error';
+			};
+
+			ws.onclose = (event) => {
+				if (!event.wasClean && !streamErrors[index]) {
+					streamErrors[index] = 'Stream disconnected';
+				}
+			};
 		} catch (err) {
 			streamErrors[index] = err instanceof Error ? err.message : 'Stream unavailable';
 		}
 	}
 
 	function stopStream(index: number) {
-		peerConnections[index]?.close();
-		peerConnections[index] = undefined!;
+		if (mediaSourceCleanups[index]) {
+			mediaSourceCleanups[index]();
+			mediaSourceCleanups[index] = undefined!;
+		}
+		if (websockets[index]) {
+			websockets[index]!.close();
+			websockets[index] = null;
+		}
 		if (videoElements[index]) {
-			videoElements[index].srcObject = null;
+			videoElements[index].src = '';
 		}
 	}
 
@@ -116,6 +184,7 @@
 							</button>
 						</div>
 					{/if}
+					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
 						bind:this={videoElements[i]}
 						autoplay
@@ -124,7 +193,9 @@
 						class="h-full w-full object-contain"
 						class:hidden={!!streamErrors[i]}
 					></video>
-					<div class="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white">
+					<div
+						class="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white"
+					>
 						{camera}
 					</div>
 				</div>

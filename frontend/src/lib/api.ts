@@ -4,6 +4,10 @@ export interface User {
 	role: string;
 	wilson_gate: boolean;
 	brigman_gate: boolean;
+	/** Cameras this user is permitted to view (admin-controlled). */
+	cameras: string[];
+	/** Cameras the user has hidden from their own view (subset of cameras). */
+	hidden_cameras: string[];
 }
 
 export interface Event {
@@ -63,6 +67,19 @@ class ApiClient {
 		return this.request('/api/me');
 	}
 
+	/** Update which of the user's permitted cameras are hidden from their view. */
+	async setCameraVisibility(hidden: string[]): Promise<User> {
+		return this.request('/api/me/cameras', {
+			method: 'PUT',
+			body: JSON.stringify({ hidden })
+		});
+	}
+
+	/** Admin: the full catalog of cameras discovered from Frigate. */
+	async getCameras(): Promise<string[]> {
+		return this.request('/api/cameras');
+	}
+
 	async getEvents(date?: string, camera?: string): Promise<Event[]> {
 		const params = new URLSearchParams();
 		if (date) params.set('date', date);
@@ -100,6 +117,7 @@ class ApiClient {
 		role: string;
 		wilson_gate: boolean;
 		brigman_gate: boolean;
+		cameras: string[];
 	}): Promise<User> {
 		return this.request('/api/users', {
 			method: 'POST',
@@ -114,6 +132,7 @@ class ApiClient {
 			password?: string;
 			wilson_gate?: boolean;
 			brigman_gate?: boolean;
+			cameras?: string[];
 		}
 	): Promise<User> {
 		return this.request(`/api/users/${id}`, {

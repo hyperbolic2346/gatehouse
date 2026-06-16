@@ -36,6 +36,10 @@ func (h *StreamHandler) ProxyMSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing camera parameter", http.StatusBadRequest)
 		return
 	}
+	if !allowedCameraSet(r)[camera] {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	// Upgrade client connection to WebSocket.
 	clientConn, err := streamUpgrader.Upgrade(w, r, nil)

@@ -41,6 +41,10 @@ type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan []byte
+	// cameras is the set of cameras this client is permitted to view.
+	// Camera-targeted broadcasts are only delivered to clients whose set
+	// contains the event's camera. Global broadcasts ignore this set.
+	cameras map[string]bool
 }
 
 // Hub maintains the set of active WebSocket clients and broadcasts messages
@@ -115,20 +119,54 @@ func (h *Hub) BroadcastJSON(v interface{}) {
 	h.Broadcast(data)
 }
 
+// BroadcastEventJSON marshals v to JSON and delivers it only to clients
+// permitted to view the given camera. This is used for per-camera events so a
+// client never receives events for cameras it cannot access.
+func (h *Hub) BroadcastEventJSON(camera string, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		slog.Error("failed to marshal event message", "error", err)
+		return
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for client := range h.clients {
+		if !client.cameras[camera] {
+			continue
+		}
+		select {
+		case client.send <- data:
+		default:
+			go func(c *Client) {
+				h.unregister <- c
+			}(client)
+		}
+	}
+}
+
 // HandleWebSocket upgrades the HTTP connection to a WebSocket and registers
 // the client with the hub. The user must be authenticated via middleware
-// before reaching this handler. The user ID is read from the request context.
-func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+// before reaching this handler. cameras is the set of cameras the connecting
+// user is permitted to view; camera-targeted events are only delivered for
+// cameras in this set.
+func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request, cameras []string) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("websocket upgrade failed", "error", err)
 		return
 	}
 
+	camSet := make(map[string]bool, len(cameras))
+	for _, c := range cameras {
+		camSet[c] = true
+	}
+
 	client := &Client{
-		hub:  h,
-		conn: conn,
-		send: make(chan []byte, sendBufferSize),
+		hub:     h,
+		conn:    conn,
+		send:    make(chan []byte, sendBufferSize),
+		cameras: camSet,
 	}
 
 	h.register <- client

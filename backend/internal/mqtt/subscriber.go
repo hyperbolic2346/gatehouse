@@ -179,5 +179,8 @@ func (s *Subscriber) handleMessage(_ mqtt.Client, msg mqtt.Message) {
 		"label", event.Label,
 	)
 
-	s.hub.BroadcastJSON(wsMsg)
+	// Deliver only to clients permitted to view this camera. Clients whose
+	// camera permissions don't include event.Camera never see the event,
+	// which also keeps events for unrelated cameras off everyone's feed.
+	s.hub.BroadcastEventJSON(event.Camera, wsMsg)
 }

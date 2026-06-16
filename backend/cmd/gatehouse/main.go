@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,14 +31,17 @@ func main() {
 		MQTTUsername: envStr("MQTT_USERNAME", ""),
 		MQTTPassword: envStr("MQTT_PASSWORD", ""),
 		DBPath:       envStr("DB_PATH", "gatehouse.db"),
+		GateCameras:  envCSV("GATE_CAMERAS", "gate,gate-rear"),
 	}
 
 	if cfg.JWTSecret == "" {
 		log.Fatal("JWT_SECRET environment variable is required")
 	}
 
-	// Open database (runs migrations and seeds admin user if needed).
-	database, err := db.New(cfg.DBPath)
+	// Open database (runs migrations and seeds admin user if needed). The gate
+	// cameras seed the admin and back-fill any pre-existing users so they keep
+	// their current view when camera permissions are introduced.
+	database, err := db.New(cfg.DBPath, cfg.GateCameras)
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
@@ -136,6 +140,22 @@ func envStr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envCSV reads a comma-separated environment variable into a slice of trimmed,
+// non-empty values, falling back to the given default CSV string.
+func envCSV(key, fallback string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		v = fallback
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // envInt reads an integer environment variable with a fallback default.

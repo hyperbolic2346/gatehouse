@@ -2,6 +2,7 @@
 	import { api, type User } from '$lib/api';
 
 	let users = $state<User[]>([]);
+	let catalog = $state<string[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 
@@ -10,6 +11,7 @@
 	let newRole = $state('user');
 	let newWilson = $state(false);
 	let newBrigman = $state(false);
+	let newCameras = $state<string[]>(['gate']);
 	let creating = $state(false);
 
 	async function loadUsers() {
@@ -23,6 +25,30 @@
 		}
 	}
 
+	async function loadCatalog() {
+		try {
+			catalog = await api.getCameras();
+		} catch {
+			// Frigate may be unreachable; fall back to cameras already assigned
+			// so existing grants remain editable.
+			catalog = [];
+		}
+	}
+
+	// Cameras to offer as toggles: the Frigate catalog, or — if unavailable —
+	// the union of cameras already assigned across users.
+	let cameraOptions = $derived(
+		catalog.length > 0
+			? catalog
+			: [...new Set(users.flatMap((u) => u.cameras ?? []))].sort()
+	);
+
+	function toggleNewCamera(camera: string) {
+		newCameras = newCameras.includes(camera)
+			? newCameras.filter((c) => c !== camera)
+			: [...newCameras, camera];
+	}
+
 	async function createUser() {
 		if (!newUsername || !newPassword) return;
 		creating = true;
@@ -33,7 +59,8 @@
 				password: newPassword,
 				role: newRole,
 				wilson_gate: newWilson,
-				brigman_gate: newBrigman
+				brigman_gate: newBrigman,
+				cameras: newCameras
 			});
 			users = [...users, user];
 			newUsername = '';
@@ -41,6 +68,7 @@
 			newRole = 'user';
 			newWilson = false;
 			newBrigman = false;
+			newCameras = ['gate'];
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to create user';
 		} finally {
@@ -54,6 +82,21 @@
 			users = users.map((u) => (u.id === updated.id ? updated : u));
 		} catch {
 			error = 'Failed to update user';
+		}
+	}
+
+	async function toggleCamera(user: User, camera: string) {
+		const set = new Set(user.cameras ?? []);
+		if (set.has(camera)) {
+			set.delete(camera);
+		} else {
+			set.add(camera);
+		}
+		try {
+			const updated = await api.updateUser(user.id, { cameras: [...set] });
+			users = users.map((u) => (u.id === updated.id ? updated : u));
+		} catch {
+			error = 'Failed to update cameras';
 		}
 	}
 
@@ -88,6 +131,7 @@
 
 	$effect(() => {
 		loadUsers();
+		loadCatalog();
 	});
 </script>
 
@@ -98,7 +142,7 @@
 
 	<div class="rounded bg-gray-800 p-4">
 		<h3 class="mb-3 text-sm font-medium text-gray-300">Add User</h3>
-		<form onsubmit={(e) => { e.preventDefault(); createUser(); }} class="flex flex-wrap gap-2">
+		<form onsubmit={(e) => { e.preventDefault(); createUser(); }} class="flex flex-wrap items-start gap-2">
 			<input
 				bind:value={newUsername}
 				placeholder="Username"
@@ -129,6 +173,22 @@
 			>
 				Add
 			</button>
+			{#if cameraOptions.length > 0}
+				<div class="flex w-full flex-wrap gap-1 pt-1">
+					<span class="mr-1 text-xs text-gray-400">Cameras:</span>
+					{#each cameraOptions as camera (camera)}
+						<button
+							type="button"
+							onclick={() => toggleNewCamera(camera)}
+							class="rounded px-2 py-0.5 text-xs {newCameras.includes(camera)
+								? 'bg-blue-600 text-white'
+								: 'bg-gray-700 text-gray-400'}"
+						>
+							{camera}
+						</button>
+					{/each}
+				</div>
+			{/if}
 		</form>
 	</div>
 
@@ -136,13 +196,14 @@
 		<div class="text-center text-gray-400">Loading users...</div>
 	{:else}
 		<div class="overflow-x-auto">
-			<table class="w-full text-sm text-left">
-				<thead class="text-xs text-gray-400 uppercase border-b border-gray-700">
+			<table class="w-full text-left text-sm">
+				<thead class="border-b border-gray-700 text-xs text-gray-400 uppercase">
 					<tr>
 						<th class="px-3 py-2">Username</th>
 						<th class="px-3 py-2">Role</th>
 						<th class="px-3 py-2">Wilson</th>
 						<th class="px-3 py-2">Brigman</th>
+						<th class="px-3 py-2">Cameras</th>
 						<th class="px-3 py-2">Actions</th>
 					</tr>
 				</thead>
@@ -176,7 +237,24 @@
 									{u.brigman_gate ? 'Yes' : 'No'}
 								</button>
 							</td>
-							<td class="px-3 py-2 flex gap-1">
+							<td class="px-3 py-2">
+								<div class="flex flex-wrap gap-1">
+									{#each cameraOptions as camera (camera)}
+										<button
+											onclick={() => toggleCamera(u, camera)}
+											class="rounded px-1.5 py-0.5 text-xs {(u.cameras ?? []).includes(camera)
+												? 'bg-blue-600 text-white'
+												: 'bg-gray-700 text-gray-500'}"
+										>
+											{camera}
+										</button>
+									{/each}
+									{#if cameraOptions.length === 0}
+										<span class="text-xs text-gray-500">—</span>
+									{/if}
+								</div>
+							</td>
+							<td class="flex gap-1 px-3 py-2">
 								<button
 									onclick={() => resetPassword(u)}
 									class="rounded bg-gray-700 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-600"

@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hyperbolic2346/gatehouse/internal/frigate"
@@ -14,14 +15,47 @@ type EventsHandler struct {
 	Frigate *frigate.Client
 }
 
+// allowedCameraSet returns the set of cameras the request's user may view.
+func allowedCameraSet(r *http.Request) map[string]bool {
+	user := UserFromContext(r.Context())
+	set := map[string]bool{}
+	if user != nil {
+		for _, c := range user.Cameras {
+			set[c] = true
+		}
+	}
+	return set
+}
+
 // List handles GET /api/events?date=20260301&camera=gate
 // It retrieves detection events from Frigate for the specified date and camera.
 // If no date is provided, today is used.
 func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
-	camera := r.URL.Query().Get("camera")
-	if camera == "" {
-		camera = "gate,gate-rear"
+	// Scope the query to the cameras this user is permitted to view. A
+	// requested camera filter is intersected with the permitted set; with no
+	// filter, all permitted cameras are used.
+	allowed := allowedCameraSet(r)
+	var permitted []string
+	if requested := r.URL.Query().Get("camera"); requested != "" {
+		for _, c := range strings.Split(requested, ",") {
+			if allowed[c] {
+				permitted = append(permitted, c)
+			}
+		}
+	} else {
+		for c := range allowed {
+			permitted = append(permitted, c)
+		}
 	}
+
+	// User has no permitted cameras for this query; return an empty list
+	// rather than querying Frigate with no camera filter (which would leak
+	// every camera's events).
+	if len(permitted) == 0 {
+		writeJSON(w, []frigate.Event{}, http.StatusOK)
+		return
+	}
+	camera := strings.Join(permitted, ",")
 	dateStr := r.URL.Query().Get("date")
 
 	var after, before int64
@@ -135,6 +169,10 @@ func (h *EventsHandler) WebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	camera := r.URL.Query().Get("camera")
 	if camera == "" {
 		writeJSONError(w, "missing camera parameter", http.StatusBadRequest)
+		return
+	}
+	if !allowedCameraSet(r)[camera] {
+		writeJSONError(w, "forbidden", http.StatusForbidden)
 		return
 	}
 

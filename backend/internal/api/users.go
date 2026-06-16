@@ -8,32 +8,79 @@ import (
 
 	"github.com/hyperbolic2346/gatehouse/internal/auth"
 	"github.com/hyperbolic2346/gatehouse/internal/db"
+	"github.com/hyperbolic2346/gatehouse/internal/frigate"
 )
+
+// defaultNewUserCameras is the camera set granted to a new user when the
+// create request does not specify one.
+var defaultNewUserCameras = []string{"gate"}
 
 // UsersHandler provides HTTP handlers for user management operations.
 // All endpoints require admin privileges, which should be enforced by
 // middleware wrapping these handlers.
 type UsersHandler struct {
-	DB *db.DB
+	DB      *db.DB
+	Frigate *frigate.Client
 }
 
 // createUserRequest is the expected JSON body for creating a new user.
+// Cameras is the set of cameras the user may view; when omitted it defaults to
+// defaultNewUserCameras.
 type createUserRequest struct {
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	Role        string `json:"role"`
-	WilsonGate  bool   `json:"wilson_gate"`
-	BrigmanGate bool   `json:"brigman_gate"`
+	Username    string   `json:"username"`
+	Password    string   `json:"password"`
+	Role        string   `json:"role"`
+	WilsonGate  bool     `json:"wilson_gate"`
+	BrigmanGate bool     `json:"brigman_gate"`
+	Cameras     []string `json:"cameras"`
 }
 
 // updateUserRequest is the expected JSON body for updating an existing user.
 // All fields are optional; only provided fields are updated.
 type updateUserRequest struct {
-	Username    *string `json:"username"`
-	Password    *string `json:"password"`
-	Role        *string `json:"role"`
-	WilsonGate  *bool   `json:"wilson_gate"`
-	BrigmanGate *bool   `json:"brigman_gate"`
+	Username    *string   `json:"username"`
+	Password    *string   `json:"password"`
+	Role        *string   `json:"role"`
+	WilsonGate  *bool     `json:"wilson_gate"`
+	BrigmanGate *bool     `json:"brigman_gate"`
+	Cameras     *[]string `json:"cameras"`
+}
+
+// ListCameras handles GET /api/cameras. It returns the catalog of cameras
+// discovered from Frigate, which admins assign to users.
+func (h *UsersHandler) ListCameras(w http.ResponseWriter, r *http.Request) {
+	cameras, err := h.Frigate.GetCameras()
+	if err != nil {
+		slog.Error("failed to list cameras from frigate", "error", err)
+		writeJSONError(w, "failed to list cameras", http.StatusBadGateway)
+		return
+	}
+	if cameras == nil {
+		cameras = []string{}
+	}
+	writeJSON(w, cameras, http.StatusOK)
+}
+
+// validateCameras returns an error response message if any requested camera is
+// not in the Frigate catalog. If the catalog cannot be fetched, validation is
+// skipped (and a warning logged) so user management does not depend on Frigate
+// being reachable.
+func (h *UsersHandler) validateCameras(cameras []string) (badCamera string, ok bool) {
+	catalog, err := h.Frigate.GetCameras()
+	if err != nil {
+		slog.Warn("skipping camera validation; frigate catalog unavailable", "error", err)
+		return "", true
+	}
+	valid := make(map[string]bool, len(catalog))
+	for _, c := range catalog {
+		valid[c] = true
+	}
+	for _, c := range cameras {
+		if !valid[c] {
+			return c, false
+		}
+	}
+	return "", true
 }
 
 // List handles GET /api/users
@@ -80,6 +127,15 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cameras := req.Cameras
+	if cameras == nil {
+		cameras = defaultNewUserCameras
+	}
+	if bad, ok := h.validateCameras(cameras); !ok {
+		writeJSONError(w, "unknown camera: "+bad, http.StatusBadRequest)
+		return
+	}
+
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		slog.Error("failed to hash password", "error", err)
@@ -93,6 +149,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Role:         req.Role,
 		WilsonGate:   req.WilsonGate,
 		BrigmanGate:  req.BrigmanGate,
+		Cameras:      cameras,
 	}
 
 	if err := h.DB.CreateUser(user); err != nil {
@@ -167,6 +224,12 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.BrigmanGate != nil {
 		existing.BrigmanGate = *req.BrigmanGate
 	}
+	if req.Cameras != nil {
+		if bad, ok := h.validateCameras(*req.Cameras); !ok {
+			writeJSONError(w, "unknown camera: "+bad, http.StatusBadRequest)
+			return
+		}
+	}
 
 	if err := h.DB.UpdateUser(existing); err != nil {
 		slog.Error("failed to update user", "user_id", id, "error", err)
@@ -174,8 +237,25 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("user updated", "user_id", existing.ID, "username", existing.Username)
-	writeJSON(w, toUserResponse(existing), http.StatusOK)
+	if req.Cameras != nil {
+		if err := h.DB.SetUserCameras(id, *req.Cameras); err != nil {
+			slog.Error("failed to update user cameras", "user_id", id, "error", err)
+			writeJSONError(w, "failed to update user", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Reload so the response reflects stored camera grants and any hidden
+	// cameras pruned because they are no longer permitted.
+	updated, err := h.DB.GetUserByID(id)
+	if err != nil {
+		slog.Error("failed to reload user after update", "user_id", id, "error", err)
+		writeJSONError(w, "failed to update user", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("user updated", "user_id", updated.ID, "username", updated.Username)
+	writeJSON(w, toUserResponse(updated), http.StatusOK)
 }
 
 // Delete handles DELETE /api/users/{id}

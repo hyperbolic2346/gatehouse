@@ -43,3 +43,15 @@ export function canOperateGate(u: User | null, gateName: string): boolean {
 	if (gateName === 'Brigman') return u.brigman_gate;
 	return false;
 }
+
+/** Cameras the user can currently see: permitted minus the ones they've hidden. */
+export function visibleCameras(u: User | null): string[] {
+	if (!u) return [];
+	const hidden = new Set(u.hidden_cameras ?? []);
+	return (u.cameras ?? []).filter((c) => !hidden.has(c));
+}
+
+/** Whether the user is permitted to view the given camera (ignores hidden state). */
+export function canViewCamera(u: User | null, camera: string): boolean {
+	return !!u && (u.cameras ?? []).includes(camera);
+}

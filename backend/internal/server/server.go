@@ -28,16 +28,17 @@ type Config struct {
 	MQTTUsername string
 	MQTTPassword string
 	DBPath       string
+	GateCameras  []string
 }
 
 // Server is the main HTTP server for the gatehouse application.
 type Server struct {
-	cfg        Config
-	db         *db.DB
-	hub        *ws.Hub
-	frigate    *frigate.Client
-	gateCtrl   *gate.Controller
-	httpSrv    *http.Server
+	cfg      Config
+	db       *db.DB
+	hub      *ws.Hub
+	frigate  *frigate.Client
+	gateCtrl *gate.Controller
+	httpSrv  *http.Server
 }
 
 // New creates a new Server. The caller must supply an already-opened DB,
@@ -62,7 +63,7 @@ func (s *Server) Start() error {
 	authHandler := &api.AuthHandler{DB: s.db, JWTSecret: s.cfg.JWTSecret}
 	eventsHandler := &api.EventsHandler{Frigate: s.frigate}
 	gatesHandler := &api.GatesHandler{Controller: s.gateCtrl, DB: s.db}
-	usersHandler := &api.UsersHandler{DB: s.db}
+	usersHandler := &api.UsersHandler{DB: s.db, Frigate: s.frigate}
 
 	// --- Public routes ---
 	mux.HandleFunc("POST /api/login", authHandler.Login)
@@ -70,6 +71,8 @@ func (s *Server) Start() error {
 	// --- Authenticated routes ---
 	mux.Handle("POST /api/logout", authMW(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("GET /api/me", authMW(http.HandlerFunc(authHandler.Me)))
+	// Self-service: hide/show cameras within the user's permitted set.
+	mux.Handle("PUT /api/me/cameras", authMW(http.HandlerFunc(authHandler.UpdateCameraVisibility)))
 
 	// Events
 	mux.Handle("GET /api/events", authMW(http.HandlerFunc(eventsHandler.List)))
@@ -96,8 +99,18 @@ func (s *Server) Start() error {
 	mux.Handle("PUT /api/users/{id}", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.Update))))
 	mux.Handle("DELETE /api/users/{id}", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.Delete))))
 
-	// WebSocket
-	mux.Handle("GET /api/ws", authMW(http.HandlerFunc(s.hub.HandleWebSocket)))
+	// Camera catalog for assigning permissions (admin only)
+	mux.Handle("GET /api/cameras", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.ListCameras))))
+
+	// WebSocket — pass the user's permitted cameras so the hub only delivers
+	// events for cameras this client may view.
+	mux.Handle("GET /api/ws", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var cameras []string
+		if user := api.UserFromContext(r.Context()); user != nil {
+			cameras = user.Cameras
+		}
+		s.hub.HandleWebSocket(w, r, cameras)
+	})))
 
 	// Static file serving with SPA fallback
 	mux.Handle("/", spaHandler(s.cfg.FrontendDir))

@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,11 +26,20 @@ type Event struct {
 	HasSnapshot bool     `json:"has_snapshot"`
 }
 
+// cameraCacheTTL is how long a discovered camera list is reused before
+// re-querying Frigate's config endpoint.
+const cameraCacheTTL = 60 * time.Second
+
 // Client communicates with the Frigate NVR REST API. WebRTC signaling is
 // proxied through Frigate's built-in go2rtc proxy at /api/go2rtc/webrtc.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+
+	camMu       sync.Mutex
+	camCache    []string
+	camCachedAt time.Time
+	now         func() time.Time
 }
 
 // New creates a Frigate API client. The baseURL should be the root URL of the
@@ -39,7 +50,50 @@ func New(baseURL string) *Client {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		now: time.Now,
 	}
+}
+
+// GetCameras returns the sorted list of camera names configured in Frigate,
+// discovered from its /api/config endpoint. Results are cached briefly to
+// avoid hammering Frigate when the admin UI or permission checks query it.
+func (c *Client) GetCameras() ([]string, error) {
+	c.camMu.Lock()
+	defer c.camMu.Unlock()
+
+	if c.camCache != nil && c.now().Sub(c.camCachedAt) < cameraCacheTTL {
+		return c.camCache, nil
+	}
+
+	reqURL := fmt.Sprintf("%s/api/config", c.baseURL)
+	resp, err := c.httpClient.Get(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("frigate get config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("frigate get config: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var cfg struct {
+		Cameras map[string]json.RawMessage `json:"cameras"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("frigate decode config: %w", err)
+	}
+
+	cameras := make([]string, 0, len(cfg.Cameras))
+	for name := range cfg.Cameras {
+		cameras = append(cameras, name)
+	}
+	sort.Strings(cameras)
+
+	c.camCache = cameras
+	c.camCachedAt = c.now()
+	slog.Info("discovered frigate cameras", "count", len(cameras))
+	return cameras, nil
 }
 
 // GetEvents retrieves detection events from Frigate, optionally filtered by

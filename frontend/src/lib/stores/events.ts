@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { api, type Event } from '../api';
+import { user, visibleCameras } from './auth';
 
 export const events = writable<Event[]>([]);
 export const selectedDate = writable<string>(todayString());
@@ -32,6 +33,10 @@ export async function fetchEvents() {
 
 export const eventsStore = {
 	addEvent(event: Event) {
+		// Ignore live events for cameras the user has hidden or cannot view.
+		if (!visibleCameras(get(user)).includes(event.camera)) {
+			return;
+		}
 		const date = get(selectedDate);
 		const eventDate = formatUnixDate(event.start_time);
 		if (eventDate === date) {

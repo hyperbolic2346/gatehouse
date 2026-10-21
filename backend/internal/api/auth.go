@@ -1,10 +1,14 @@
 package api
 
 import (
+	"crypto/md5"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/hyperbolic2346/gatehouse/internal/auth"
@@ -33,6 +37,11 @@ type userResponse struct {
 	CreatedAt     string   `json:"created_at"`
 	Cameras       []string `json:"cameras"`
 	HiddenCameras []string `json:"hidden_cameras"`
+	DisplayName   string   `json:"display_name"`
+	HoldPriority  int      `json:"hold_priority"`
+	// LegacyPassword is true until an imported user first logs in and their
+	// old md5 hash is replaced with bcrypt.
+	LegacyPassword bool `json:"legacy_password"`
 }
 
 func toUserResponse(u *db.User) userResponse {
@@ -45,14 +54,17 @@ func toUserResponse(u *db.User) userResponse {
 		hidden = []string{}
 	}
 	return userResponse{
-		ID:            u.ID,
-		Username:      u.Username,
-		Role:          u.Role,
-		WilsonGate:    u.WilsonGate,
-		BrigmanGate:   u.BrigmanGate,
-		CreatedAt:     u.CreatedAt,
-		Cameras:       cameras,
-		HiddenCameras: hidden,
+		ID:             u.ID,
+		Username:       u.Username,
+		Role:           u.Role,
+		WilsonGate:     u.WilsonGate,
+		BrigmanGate:    u.BrigmanGate,
+		CreatedAt:      u.CreatedAt,
+		Cameras:        cameras,
+		HiddenCameras:  hidden,
+		DisplayName:    u.DisplayName,
+		HoldPriority:   u.HoldPriority,
+		LegacyPassword: u.HasLegacyPassword(),
 	}
 }
 
@@ -74,13 +86,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.DB.GetUserByUsername(req.Username)
 	if err != nil {
 		log.Printf("login: user lookup failed for %q: %v", req.Username, err)
+		h.logLoginFailure(req.Username, r)
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
 
-	if err := auth.CheckPassword(user.PasswordHash, req.Password); err != nil {
+	if !h.checkPassword(user, req.Password) {
+		h.logLoginFailure(req.Username, r)
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
+	}
+
+	if err := h.DB.LogActivity(db.NewActivity(user, nil, db.ActionLogin, clientIP(r))); err != nil {
+		slog.Error("failed to log login", "error", err)
 	}
 
 	token, err := auth.GenerateToken(user, h.JWTSecret)
@@ -95,12 +113,67 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(24 * time.Hour / time.Second),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(toUserResponse(user))
+}
+
+// checkPassword verifies password against user's stored hash. Users imported
+// from the old gate site carry an unsalted md5 hash; on their first
+// successful login it is replaced with bcrypt.
+func (h *AuthHandler) checkPassword(user *db.User, password string) bool {
+	if !user.HasLegacyPassword() {
+		return auth.CheckPassword(user.PasswordHash, password) == nil
+	}
+
+	want := strings.ToLower(strings.TrimPrefix(user.PasswordHash, db.LegacyMD5Prefix))
+	sum := md5.Sum([]byte(password))
+	got := hex.EncodeToString(sum[:])
+	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+		return false
+	}
+
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		slog.Error("failed to upgrade legacy password", "user_id", user.ID, "error", err)
+		return true
+	}
+	user.PasswordHash = hash
+	if err := h.DB.UpdateUser(user); err != nil {
+		slog.Error("failed to upgrade legacy password", "user_id", user.ID, "error", err)
+	} else {
+		slog.Info("upgraded legacy password to bcrypt", "user_id", user.ID, "username", user.Username)
+	}
+	return true
+}
+
+func (h *AuthHandler) logLoginFailure(username string, r *http.Request) {
+	a := &db.Activity{Action: db.ActionLoginFailed, Actor: username, Detail: clientIP(r)}
+	if err := h.DB.LogActivity(a); err != nil {
+		slog.Error("failed to log login failure", "error", err)
+	}
+}
+
+// clientIP returns the caller's address, preferring the header Cloudflare
+// sets since the app is only reachable through the Cloudflare tunnel.
+func clientIP(r *http.Request) string {
+	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
+		return ip
+	}
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		return strings.TrimSpace(strings.Split(fwd, ",")[0])
+	}
+	return r.RemoteAddr
+}
+
+// isHTTPS reports whether the browser reached us over HTTPS, directly or via
+// the TLS-terminating gateway.
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // Me handles GET /api/me. It returns the current authenticated user's info
@@ -171,6 +244,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

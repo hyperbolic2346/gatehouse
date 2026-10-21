@@ -60,7 +60,7 @@ func main() {
 
 	// Create gate controller and MQTT subscriber. The MQTT client will be
 	// set once the connection is established (in the background).
-	gateCtrl := gate.New(nil, hub)
+	gateCtrl := gate.New(nil, hub, database)
 	mqttSub := mqttpkg.New(nil, hub, frigateClient)
 
 	// Connect MQTT in the background so the HTTP server can start

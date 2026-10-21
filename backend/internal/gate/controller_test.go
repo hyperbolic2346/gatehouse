@@ -97,3 +97,15 @@ func TestGetStatusIsOrderedByID(t *testing.T) {
 		}
 	}
 }
+
+func TestInitialNotHeldIsNotLogged(t *testing.T) {
+	c, d := newTestController(t)
+	c.SetStatus(0, "Not Held")
+	rows, err := d.ListActivity(0, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("activity = %+v, want nothing for a gate that was never held", rows)
+	}
+}

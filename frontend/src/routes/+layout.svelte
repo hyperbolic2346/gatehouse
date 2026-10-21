@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import { user, loading, checkAuth, logout } from '$lib/stores/auth';
 	import { connect, disconnect } from '$lib/ws';
+	import { displayName } from '$lib/api';
 
 	let { children } = $props();
 
@@ -55,7 +56,7 @@
 				{#if currentUser.role === 'admin'}
 					<a href="/admin" class="text-sm text-gray-300 hover:text-white">Admin</a>
 				{/if}
-				<span class="text-sm text-gray-400">{currentUser.username}</span>
+				<span class="text-sm text-gray-400">{displayName(currentUser)}</span>
 				<button
 					onclick={handleLogout}
 					class="rounded bg-gray-700 px-3 py-1 text-sm text-gray-300 hover:bg-gray-600"

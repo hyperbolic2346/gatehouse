@@ -39,6 +39,7 @@ export function isAdmin(u: User | null): boolean {
 
 export function canOperateGate(u: User | null, gateName: string): boolean {
 	if (!u) return false;
+	if (u.role === 'admin') return true;
 	if (gateName === 'Wilson') return u.wilson_gate;
 	if (gateName === 'Brigman') return u.brigman_gate;
 	return false;

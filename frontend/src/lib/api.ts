@@ -8,6 +8,16 @@ export interface User {
 	cameras: string[];
 	/** Cameras the user has hidden from their own view (subset of cameras). */
 	hidden_cameras: string[];
+	/** Name shown to others; empty means use username. */
+	display_name: string;
+	/** Hold priority among non-admins: a higher number outranks a lower one. */
+	hold_priority: number;
+	/** Still on a password imported from the old gate site (upgraded on next login). */
+	legacy_password: boolean;
+}
+
+export function displayName(u: Pick<User, 'username' | 'display_name'>): string {
+	return u.display_name || u.username;
 }
 
 export interface Event {
@@ -25,6 +35,27 @@ export interface GateStatus {
 	name: string;
 	id: number;
 	hold_status: string;
+	held: boolean;
+	/** Who in Gatehouse holds the gate; absent for holds placed elsewhere. */
+	held_by?: string;
+	/** When the current hold began, if known (ISO timestamp). */
+	held_since?: string;
+}
+
+export interface Activity {
+	id: number;
+	at: string;
+	user_id?: number;
+	/** Display name at the time; empty for status reports from the gate controller. */
+	actor: string;
+	gate_id?: number;
+	action: string;
+	detail?: string;
+}
+
+export interface ImportResult {
+	imported: User[];
+	skipped: { username: string; reason: string }[];
 }
 
 let unauthorizedCallback: (() => void) | null = null;
@@ -46,7 +77,13 @@ class ApiClient {
 		}
 		if (!res.ok) {
 			const text = await res.text();
-			throw new Error(text || res.statusText);
+			let message = text || res.statusText;
+			try {
+				message = JSON.parse(text).error ?? message;
+			} catch {
+				// not JSON; use the raw text
+			}
+			throw new Error(message);
 		}
 		if (res.status === 204) return undefined as T;
 		return res.json();
@@ -118,6 +155,8 @@ class ApiClient {
 		wilson_gate: boolean;
 		brigman_gate: boolean;
 		cameras: string[];
+		display_name: string;
+		hold_priority: number;
 	}): Promise<User> {
 		return this.request('/api/users', {
 			method: 'POST',
@@ -133,6 +172,8 @@ class ApiClient {
 			wilson_gate?: boolean;
 			brigman_gate?: boolean;
 			cameras?: string[];
+			display_name?: string;
+			hold_priority?: number;
 		}
 	): Promise<User> {
 		return this.request(`/api/users/${id}`, {
@@ -143,6 +184,23 @@ class ApiClient {
 
 	async deleteUser(id: number): Promise<void> {
 		return this.request(`/api/users/${id}`, { method: 'DELETE' });
+	}
+
+	/** Admin: import users from a `mysql -B` dump of the old gate site's users table. */
+	async importUsers(tsv: string): Promise<ImportResult> {
+		return this.request('/api/users/import', {
+			method: 'POST',
+			body: JSON.stringify({ tsv })
+		});
+	}
+
+	/** Admin: audit log, newest first. Pass the smallest id seen as `before` to page back. */
+	async getActivity(opts: { before?: number; gate?: number; limit?: number } = {}): Promise<Activity[]> {
+		const params = new URLSearchParams();
+		if (opts.before) params.set('before', String(opts.before));
+		if (opts.gate !== undefined) params.set('gate', String(opts.gate));
+		if (opts.limit) params.set('limit', String(opts.limit));
+		return this.request(`/api/activity?${params}`);
 	}
 
 	async webrtcOffer(camera: string, offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {

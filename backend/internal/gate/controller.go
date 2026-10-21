@@ -176,6 +176,9 @@ func (c *Controller) logTransition(gateID int, holdStatus string) {
 	if last != nil && last.Action == action {
 		return // already recorded (e.g. retained message after a restart)
 	}
+	if last == nil && action == db.ActionCleared {
+		return // nothing was ever held; "not held" is not news
+	}
 
 	a := &db.Activity{GateID: db.GateID(gateID), Action: action, Detail: holdStatus}
 	if action == db.ActionHeld && last != nil && last.Action == db.ActionHold && time.Since(last.At) < attributionWindow {

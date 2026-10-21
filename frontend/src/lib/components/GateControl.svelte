@@ -33,11 +33,22 @@
 		}
 	}
 
-	function holdColor(holdStatus: string): string {
-		const lower = holdStatus.toLowerCase();
-		if (lower.includes('held') || lower.includes('hold')) return 'text-yellow-400';
-		if (lower === 'unknown') return 'text-gray-600';
+	function holdColor(gate: GateStatus): string {
+		if (gate.held) return 'text-yellow-400';
+		if (gate.hold_status.toLowerCase() === 'unknown') return 'text-gray-600';
 		return 'text-green-400';
+	}
+
+	// "Tuesday 4:12 PM", like the old gate site showed.
+	function formatSince(iso: string): string {
+		return new Date(iso).toLocaleString(undefined, { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+	}
+
+	function holdLabel(gate: GateStatus): string {
+		if (!gate.held) return gate.hold_status;
+		const who = gate.held_by ? `Held by ${gate.held_by}` : 'Held outside Gatehouse';
+		if (!gate.held_since) return gate.held_by ? who : gate.hold_status;
+		return `${who} since ${formatSince(gate.held_since)}`;
 	}
 </script>
 
@@ -49,7 +60,7 @@
 					<span class="w-20 font-medium text-white">{gate.name}</span>
 				</div>
 				<div class="flex flex-1 items-center gap-2">
-					<span class="text-xs {holdColor(gate.hold_status)}">{gate.hold_status}</span>
+					<span class="text-xs {holdColor(gate)}">{holdLabel(gate)}</span>
 				</div>
 				{#if isMobile}
 					<select

@@ -9,6 +9,8 @@ A modern web application for monitoring a driveway camera, viewing detection eve
 - **Gate control** — Open, hold, and release two physical gates (Wilson and Brigman) via an Arduino controller on the local network
 - **Real-time updates** — New detection events and gate status changes are pushed instantly via WebSocket (backed by MQTT from Frigate)
 - **Multi-user with permissions** — Admin and neighbor users with per-gate access control. Admins can manage users and delete events.
+- **Hold tracking and priority** — Shows who is holding a gate and since when. A user can't take over or release a hold placed by someone with a higher hold priority (admins outrank everyone).
+- **Activity log** — Every login, failed login, gate command, blocked command, hold-status change and user change is recorded; admins can browse it at `/admin`.
 - **Responsive** — Desktop shows dual camera feeds side-by-side; mobile uses a tabbed camera view and compact gate controls
 
 ## Architecture
@@ -120,6 +122,8 @@ Change this password immediately via the admin panel at `/admin`.
 | `POST` | `/api/users` | Admin | Create a user |
 | `PUT` | `/api/users/:id` | Admin | Update a user |
 | `DELETE` | `/api/users/:id` | Admin | Delete a user |
+| `POST` | `/api/users/import` | Admin | Import users from the old gate site (`mysql -B` output) |
+| `GET` | `/api/activity?before=ID&limit=N&gate=ID` | Admin | Activity log, newest first |
 | `WS` | `/api/ws` | Yes | WebSocket for real-time events |
 
 ## WebSocket Messages
@@ -152,3 +156,15 @@ Gate 0 = Wilson, Gate 1 = Brigman.
 | `role: user` | Access only permitted gates, no delete, no user management |
 | `wilson_gate` | Can see and control Wilson gate |
 | `brigman_gate` | Can see and control Brigman gate |
+| `hold_priority` | Higher outranks lower: you can't take over or release a hold by someone who outranks you |
+| `display_name` | Name shown to others ("Held by ...") and in the activity log |
+
+## Migrating from the old gate site
+
+On `/admin`, open **Import users from the old gate site** and paste the output of:
+
+```sql
+SELECT username, password, display_name, access_level, operate_wilson_gate, operate_brigman_gate FROM users
+```
+
+run with `mysql -B` against the old gate database. Usernames that already exist are skipped. Everyone is imported as a regular user; gate's `access_level` (lower = more senior) becomes `hold_priority` (higher = more senior). Their existing passwords keep working, and the old md5 hash is replaced with bcrypt the first time each person logs in (the admin table marks users still on an old password).

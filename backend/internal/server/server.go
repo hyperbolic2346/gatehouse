@@ -93,9 +93,14 @@ func (s *Server) Start() error {
 	mux.Handle("POST /api/gates/{id}/hold", authMW(http.HandlerFunc(gatesHandler.Hold)))
 	mux.Handle("POST /api/gates/{id}/release", authMW(http.HandlerFunc(gatesHandler.Release)))
 
+	// Audit log (admin only)
+	activityHandler := &api.ActivityHandler{DB: s.db}
+	mux.Handle("GET /api/activity", authMW(api.AdminOnly(http.HandlerFunc(activityHandler.List))))
+
 	// Users (admin only)
 	mux.Handle("GET /api/users", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.List))))
 	mux.Handle("POST /api/users", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.Create))))
+	mux.Handle("POST /api/users/import", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.Import))))
 	mux.Handle("PUT /api/users/{id}", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.Update))))
 	mux.Handle("DELETE /api/users/{id}", authMW(api.AdminOnly(http.HandlerFunc(usersHandler.Delete))))
 
@@ -106,10 +111,12 @@ func (s *Server) Start() error {
 	// events for cameras this client may view.
 	mux.Handle("GET /api/ws", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var cameras []string
+		var gates []int
 		if user := api.UserFromContext(r.Context()); user != nil {
 			cameras = user.Cameras
+			gates = api.PermittedGates(user)
 		}
-		s.hub.HandleWebSocket(w, r, cameras)
+		s.hub.HandleWebSocket(w, r, cameras, gates)
 	})))
 
 	// Static file serving with SPA fallback

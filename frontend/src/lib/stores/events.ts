@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import { api, type Event } from '../api';
+import { api, EVENTS_PAGE_SIZE, type Event } from '../api';
 import { user, visibleCameras } from './auth';
 
 export const events = writable<Event[]>([]);
@@ -7,6 +7,13 @@ export const selectedDate = writable<string>(toDateString(new Date()));
 export const selectedCamera = writable<string>('');
 export const eventsLoading = writable(false);
 export const eventsError = writable<string | null>(null);
+/** Whether older events may exist for the selected day. */
+export const eventsHasMore = writable(false);
+export const eventsLoadingMore = writable(false);
+
+// Bumped on every fresh load so a slow "load more" for a previous day or
+// camera is discarded instead of mixed in.
+let generation = 0;
 
 /** Local date as YYYYMMDD, the form the events API takes. */
 export function toDateString(d: Date): string {
@@ -21,18 +28,44 @@ export function fromDateString(s: string): Date {
 }
 
 export async function fetchEvents() {
+	const gen = ++generation;
 	eventsLoading.set(true);
 	eventsError.set(null);
+	eventsHasMore.set(false);
 	try {
 		const date = get(selectedDate);
 		const camera = get(selectedCamera);
-		const result = await api.getEvents(date, camera || undefined);
-		events.set(result || []);
+		const result = (await api.getEvents(date, camera || undefined)) || [];
+		if (gen !== generation) return;
+		events.set(result);
+		eventsHasMore.set(result.length >= EVENTS_PAGE_SIZE);
 	} catch (err) {
+		if (gen !== generation) return;
 		events.set([]);
 		eventsError.set(err instanceof Error ? err.message : 'Failed to load events');
 	} finally {
-		eventsLoading.set(false);
+		if (gen === generation) eventsLoading.set(false);
+	}
+}
+
+/** Append the next page of older events for the selected day. */
+export async function loadMoreEvents() {
+	if (!get(eventsHasMore) || get(eventsLoadingMore) || get(eventsLoading)) return;
+	const current = get(events);
+	if (current.length === 0) return;
+	const gen = generation;
+	eventsLoadingMore.set(true);
+	try {
+		const oldest = Math.min(...current.map((e) => e.start_time));
+		const page = (await api.getEvents(get(selectedDate), get(selectedCamera) || undefined, oldest)) || [];
+		if (gen !== generation) return;
+		const seen = new Set(current.map((e) => e.id));
+		events.update((list) => [...list, ...page.filter((e) => !seen.has(e.id))]);
+		eventsHasMore.set(page.length >= EVENTS_PAGE_SIZE);
+	} catch {
+		// leave hasMore set so scrolling or the button can try again
+	} finally {
+		if (gen === generation) eventsLoadingMore.set(false);
 	}
 }
 

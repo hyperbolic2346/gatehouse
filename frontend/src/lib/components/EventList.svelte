@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { events, eventsLoading, eventsError, fetchEvents } from '$lib/stores/events';
+	import {
+		events,
+		eventsLoading,
+		eventsError,
+		eventsHasMore,
+		eventsLoadingMore,
+		fetchEvents,
+		loadMoreEvents
+	} from '$lib/stores/events';
 	import { api, type Event } from '$lib/api';
 	import EventCard from './EventCard.svelte';
 
@@ -7,6 +15,21 @@
 	let loading = $derived($eventsLoading);
 	let error = $derived($eventsError);
 	let clipModal = $state<Event | null>(null);
+
+	// Load the next page automatically when the end of the list scrolls
+	// into view (with some lead), so the whole day is reachable by scrolling.
+	let sentinel = $state<HTMLDivElement | undefined>();
+	$effect(() => {
+		if (!sentinel) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) loadMoreEvents();
+			},
+			{ rootMargin: '400px' }
+		);
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	});
 
 	async function handleDelete(id: string) {
 		if (!confirm('Delete this event?')) return;
@@ -50,6 +73,19 @@
 			<EventCard {event} onDelete={handleDelete} onPlay={handlePlay} />
 		{/each}
 	</div>
+	{#if $eventsHasMore}
+		<div bind:this={sentinel} class="py-4 text-center">
+			<button
+				onclick={() => loadMoreEvents()}
+				disabled={$eventsLoadingMore}
+				class="rounded bg-gray-700 px-4 py-2 text-sm text-gray-200 hover:bg-gray-600 disabled:opacity-50"
+			>
+				{$eventsLoadingMore ? 'Loading…' : 'Show more'}
+			</button>
+		</div>
+	{:else if eventList.length > 0}
+		<p class="py-4 text-center text-xs text-gray-500">{eventList.length} events · that's the whole day</p>
+	{/if}
 {/if}
 
 {#if clipModal}

@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,19 +62,35 @@ func (h *EventsHandler) List(w http.ResponseWriter, r *http.Request) {
 	var after, before int64
 
 	if dateStr != "" {
-		t, err := time.Parse("20060102", dateStr)
+		// The day is the server's local day (TZ), not UTC, so "today" means
+		// midnight to midnight where the cameras are.
+		t, err := time.ParseInLocation("20060102", dateStr, time.Local)
 		if err != nil {
 			writeJSONError(w, "invalid date format, use YYYYMMDD", http.StatusBadRequest)
 			return
 		}
 		after = t.Unix()
-		before = t.Add(24 * time.Hour).Unix()
+		before = t.AddDate(0, 0, 1).Unix()
 	} else {
 		// Default to today in local time.
 		now := time.Now()
 		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 		after = startOfDay.Unix()
-		before = startOfDay.Add(24 * time.Hour).Unix()
+		before = startOfDay.AddDate(0, 0, 1).Unix()
+	}
+
+	// Paging: Frigate returns the newest events first, a page at a time.
+	// The client passes the start_time of the oldest event it has as
+	// "before" to get the next older page within the same day.
+	if v := r.URL.Query().Get("before"); v != "" {
+		b, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			writeJSONError(w, "invalid before", http.StatusBadRequest)
+			return
+		}
+		if bt := int64(b); bt < before {
+			before = bt
+		}
 	}
 
 	events, err := h.Frigate.GetEvents(camera, before, after)

@@ -65,6 +65,10 @@
 				return `${gate} became held`;
 			case 'cleared':
 				return `${gate} hold ended`;
+			case 'schedule_created':
+				return `Scheduled a hold on ${gate}`;
+			case 'schedule_cancelled':
+				return `Cancelled a scheduled hold on ${gate}`;
 			case 'user_created':
 				return 'Added user';
 			case 'user_updated':

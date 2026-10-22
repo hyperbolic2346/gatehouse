@@ -19,6 +19,43 @@
 
 	let isMobile = $state(false);
 	let managing = $state(false);
+
+	// The camera shown enlarged over the page, if any. The tile itself is
+	// restyled rather than re-created, so the stream keeps playing.
+	let expanded = $state<string | null>(null);
+	let tiles: Record<string, HTMLDivElement> = {};
+
+	function toggleExpanded(camera: string) {
+		expanded = expanded === camera ? null : camera;
+	}
+
+	async function goFullscreen(camera: string) {
+		const tile = tiles[camera];
+		const video = videoElements[camera] as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+		if (document.fullscreenElement) {
+			await document.exitFullscreen();
+			return;
+		}
+		try {
+			if (tile?.requestFullscreen) {
+				await tile.requestFullscreen();
+				return;
+			}
+		} catch {
+			// fall through to the video element's own fullscreen
+		}
+		// iPhone Safari only supports fullscreen on the video itself.
+		video?.webkitEnterFullscreen?.();
+	}
+
+	$effect(() => {
+		if (!expanded) return;
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape' && !document.fullscreenElement) expanded = null;
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	});
 	let savingVisibility = $state(false);
 
 	function checkMobile() {
@@ -254,13 +291,32 @@
 	{:else}
 		<div class={isMobile ? '' : cameras.length > 1 ? 'grid grid-cols-2 gap-2' : ''}>
 			{#each cameras as camera, i (camera)}
+				{@const big = expanded === camera}
 				<div class={isMobile && i !== active ? 'hidden' : ''}>
-					<div class="relative aspect-video overflow-hidden rounded bg-black">
+					<div
+						bind:this={tiles[camera]}
+						role="button"
+						tabindex="0"
+						aria-label={big ? `Shrink ${camera}` : `Enlarge ${camera}`}
+						onclick={() => toggleExpanded(camera)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								toggleExpanded(camera);
+							}
+						}}
+						class="overflow-hidden bg-black {big
+							? 'fixed inset-0 z-50 cursor-zoom-out'
+							: 'relative aspect-video cursor-zoom-in rounded'}"
+					>
 						{#if streamErrors[camera]}
 							<div class="flex h-full flex-col items-center justify-center gap-2">
 								<p class="text-sm text-red-400">{camera}: {streamErrors[camera]}</p>
 								<button
-									onclick={() => retryStream(camera)}
+									onclick={(e) => {
+										e.stopPropagation();
+										retryStream(camera);
+									}}
 									class="rounded bg-gray-700 px-3 py-1 text-xs text-gray-300 hover:bg-gray-600"
 								>
 									Retry
@@ -280,6 +336,30 @@
 							class="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white"
 						>
 							{camera}
+						</div>
+						<div class="absolute top-2 right-2 flex gap-2">
+							<button
+								onclick={(e) => {
+									e.stopPropagation();
+									goFullscreen(camera);
+								}}
+								class="rounded bg-black/60 px-2 py-1 text-sm text-white hover:bg-black/80"
+								aria-label="Full screen"
+								title="Full screen"
+							>
+								⛶
+							</button>
+							{#if big}
+								<button
+									onclick={(e) => {
+										e.stopPropagation();
+										expanded = null;
+									}}
+									class="rounded bg-black/60 px-3 py-1 text-sm text-white hover:bg-black/80"
+								>
+									✕ Close
+								</button>
+							{/if}
 						</div>
 					</div>
 				</div>

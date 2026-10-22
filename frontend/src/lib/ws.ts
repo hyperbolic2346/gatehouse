@@ -1,8 +1,9 @@
 import { eventsStore } from './stores/events';
 import { gatesStore } from './stores/gates';
+import { refreshSchedules } from './stores/schedules';
 
 export interface WSMessage {
-	type: 'new_event' | 'event_update' | 'gate_status' | 'day_rollover';
+	type: 'new_event' | 'event_update' | 'gate_status' | 'day_rollover' | 'schedules_changed';
 	data: unknown;
 }
 
@@ -26,6 +27,9 @@ function handleMessage(msg: WSMessage) {
 		case 'gate_status':
 			gatesStore.set(msg.data as import('./api').GateStatus[]);
 			break;
+		case 'schedules_changed':
+			refreshSchedules();
+			break;
 		case 'day_rollover':
 			eventsStore.handleDayRollover((msg.data as { date: string }).date);
 			break;
@@ -39,6 +43,7 @@ export function connect() {
 
 	ws.onopen = () => {
 		reconnectDelay = 1000;
+		refreshSchedules();
 	};
 
 	ws.onmessage = (ev) => {

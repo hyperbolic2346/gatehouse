@@ -10,6 +10,7 @@ A modern web application for monitoring a driveway camera, viewing detection eve
 - **Real-time updates** — New detection events and gate status changes are pushed instantly via WebSocket (backed by MQTT from Frigate)
 - **Multi-user with permissions** — Admin and neighbor users with per-gate access control. Admins can manage users and delete events.
 - **Hold tracking and priority** — Shows who is holding a gate and since when. A user can't take over or release a hold placed by someone with a higher hold priority (admins outrank everyone).
+- **Scheduled holds** — Book a gate to be held open for a window (e.g. a delivery). The server starts and ends it on time whether or not anyone has the page open; the owner or an admin can cancel it.
 - **Activity log** — Every login, failed login, gate command, blocked command, hold-status change and user change is recorded; admins can browse it at `/admin`.
 - **Responsive** — Desktop shows dual camera feeds side-by-side; mobile uses a tabbed camera view and compact gate controls
 
@@ -54,6 +55,7 @@ These services must be reachable from the Gatehouse pod:
 | `MQTT_BROKER` | `tcp://mosquitto.home.svc.cluster.local:8883` | MQTT broker URL |
 | `ARDUINO_ADDR` | `http://10.0.1.25` | Arduino gate controller base URL |
 | `DB_PATH` | `gatehouse.db` | Path to SQLite database file |
+| `TZ` | *(UTC)* | Local time zone (e.g. `America/New_York`); used for the midnight event rollover and times written into the activity log |
 | `FRONTEND_DIR` | `../frontend/build` | Path to static frontend files |
 
 ### Kubernetes
@@ -124,6 +126,9 @@ Change this password immediately via the admin panel at `/admin`.
 | `DELETE` | `/api/users/:id` | Admin | Delete a user |
 | `POST` | `/api/users/import` | Admin | Import users from the old gate site (`mysql -B` output) |
 | `GET` | `/api/activity?before=ID&limit=N&gate=ID` | Admin | Activity log, newest first |
+| `GET` | `/api/schedules` | Yes | Upcoming and in-progress scheduled holds on the user's gates |
+| `POST` | `/api/schedules` | Yes | Schedule a hold (`gate_id`, `start`, `end`, `note`); max 24 hours, up to 60 days ahead |
+| `DELETE` | `/api/schedules/:id` | Owner/Admin | Cancel; releases the gate if the hold is in progress |
 | `WS` | `/api/ws` | Yes | WebSocket for real-time events |
 
 ## WebSocket Messages
@@ -135,6 +140,7 @@ Messages pushed from server to client:
 {"type": "event_update", "data": {"id": "...", "end_time": 1234567890}}
 {"type": "gate_status", "data": [{"name": "Wilson", "id": 0, "state": "CLOSED", ...}]}
 {"type": "day_rollover", "data": {"date": "20260302"}}
+{"type": "schedules_changed"}
 ```
 
 ## Gate Hardware

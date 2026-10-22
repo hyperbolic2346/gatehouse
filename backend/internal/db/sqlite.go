@@ -199,6 +199,13 @@ func (d *DB) migrate() error {
 	if err := d.addColumnIfMissing("users", "hold_priority", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+
+	// Usernames are unique regardless of case. A database that already has
+	// two usernames differing only by case cannot take the index; the API
+	// still refuses new clashes, so warn rather than fail to start.
+	if _, err := d.conn.Exec("CREATE UNIQUE INDEX IF NOT EXISTS users_username_nocase ON users (username COLLATE NOCASE)"); err != nil {
+		log.Printf("Warning: usernames differing only by case exist; case-insensitive unique index not created: %v", err)
+	}
 	return nil
 }
 
@@ -308,10 +315,17 @@ func (d *DB) seedAdmin() error {
 	return nil
 }
 
-// GetUserByUsername returns the user with the given username.
+// GetUserByUsername returns the user with the given username, ignoring case
+// and surrounding spaces (phones capitalise the first letter and autocomplete
+// can add a trailing space). If two existing users differ only by case, an
+// exact match wins.
 func (d *DB) GetUserByUsername(username string) (*User, error) {
+	username = strings.TrimSpace(username)
 	u := &User{}
-	err := scanUser(d.conn.QueryRow("SELECT "+userColumns+" FROM users WHERE username = ?", username), u)
+	err := scanUser(d.conn.QueryRow(
+		"SELECT "+userColumns+" FROM users WHERE username = ? COLLATE NOCASE ORDER BY username = ? DESC, id LIMIT 1",
+		username, username,
+	), u)
 	if err != nil {
 		return nil, fmt.Errorf("get user by username: %w", err)
 	}

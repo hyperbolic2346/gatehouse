@@ -118,8 +118,13 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" {
 		writeJSONError(w, "username is required", http.StatusBadRequest)
+		return
+	}
+	if taken, err := h.DB.GetUserByUsername(req.Username); err == nil {
+		writeJSONError(w, "username already taken by "+taken.Username, http.StatusConflict)
 		return
 	}
 	if req.Password == "" {
@@ -202,11 +207,16 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Username != nil {
-		if *req.Username == "" {
+		name := strings.TrimSpace(*req.Username)
+		if name == "" {
 			writeJSONError(w, "username cannot be empty", http.StatusBadRequest)
 			return
 		}
-		existing.Username = *req.Username
+		if taken, err := h.DB.GetUserByUsername(name); err == nil && taken.ID != existing.ID {
+			writeJSONError(w, "username already taken by "+taken.Username, http.StatusConflict)
+			return
+		}
+		existing.Username = name
 	}
 	if req.Password != nil {
 		if *req.Password == "" {

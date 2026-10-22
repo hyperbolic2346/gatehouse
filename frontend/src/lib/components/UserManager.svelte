@@ -197,6 +197,9 @@
 				bind:value={newUsername}
 				placeholder="Username"
 				required
+				autocapitalize="none"
+				autocorrect="off"
+				spellcheck="false"
 				class="rounded border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-white"
 			/>
 			<input

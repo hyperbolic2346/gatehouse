@@ -83,6 +83,8 @@ func (s *Server) Start() error {
 	// Live streams (MSE over WebSocket, proxied to go2rtc)
 	streamHandler := &api.StreamHandler{Go2rtcURL: s.cfg.Go2rtcURL}
 	mux.Handle("GET /api/stream/mse", authMW(http.HandlerFunc(streamHandler.ProxyMSE)))
+	// HLS fallback for browsers without MediaSource (older iPhones/iPads)
+	mux.Handle("GET /api/stream/hls/{path...}", authMW(http.HandlerFunc(streamHandler.ProxyHLS)))
 
 	// WebRTC (kept as fallback)
 	mux.Handle("POST /api/webrtc/offer", authMW(http.HandlerFunc(eventsHandler.WebRTCOffer)))

@@ -69,32 +69,63 @@
 			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 			const wsUrl = `${protocol}//${window.location.host}/api/stream/mse?camera=${camera}`;
 
-			const ws = new WebSocket(wsUrl);
-			websockets[camera] = ws;
-			ws.binaryType = 'arraybuffer';
-
 			const video = videoElements[camera];
 			if (!video) {
 				streamErrors[camera] = 'Video element not ready';
 				return;
 			}
 
-			const mediaSource = new MediaSource();
-			video.src = URL.createObjectURL(mediaSource);
+			// iPhones (iOS 17.1+) have Apple's ManagedMediaSource instead of
+			// MediaSource; older iPhones and iPads have neither but play HLS.
+			const MSE: typeof MediaSource | undefined =
+				(window as unknown as { ManagedMediaSource?: typeof MediaSource }).ManagedMediaSource ??
+				window.MediaSource;
+			if (!MSE || forceHLS()) {
+				startHLS(camera, video);
+				return;
+			}
+			const managed = MSE !== window.MediaSource;
+
+			const ws = new WebSocket(wsUrl);
+			websockets[camera] = ws;
+			ws.binaryType = 'arraybuffer';
+
+			const mediaSource = new MSE();
+			let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+			if (managed) {
+				// ManagedMediaSource only plays with remote playback off, and
+				// attaches through srcObject.
+				video.disableRemotePlayback = true;
+				video.srcObject = mediaSource as unknown as MediaProvider;
+				// If it has not shown a picture in 10s, switch this camera
+				// to HLS, which every iPhone plays natively.
+				fallbackTimer = setTimeout(() => {
+					if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && cleanups[camera]) {
+						stopStream(camera);
+						streamErrors[camera] = null;
+						startHLS(camera, video);
+					}
+				}, 10_000);
+			} else {
+				video.src = URL.createObjectURL(mediaSource);
+			}
 
 			let sourceBuffer: SourceBuffer | null = null;
 			let bufferQueue: ArrayBuffer[] = [];
 
 			cleanups[camera] = () => {
+				clearTimeout(fallbackTimer);
 				ws.close();
-				if (video.src) {
+				if (managed) {
+					video.srcObject = null;
+				} else if (video.src) {
 					URL.revokeObjectURL(video.src);
 					video.src = '';
 				}
 			};
 
 			function initSourceBuffer(mimeType: string) {
-				if (!MediaSource.isTypeSupported(mimeType)) {
+				if (!MSE!.isTypeSupported(mimeType)) {
 					streamErrors[camera] = `Unsupported codec: ${mimeType}`;
 					ws.close();
 					return;
@@ -177,6 +208,39 @@
 		}
 	}
 
+	// Troubleshooting switch: ?live=hls (or localStorage.liveVideo = 'hls')
+	// forces the HLS path that older iPhones use.
+	function forceHLS(): boolean {
+		if (new URLSearchParams(window.location.search).get('live') === 'hls') return true;
+		try {
+			return localStorage.getItem('liveVideo') === 'hls';
+		} catch {
+			return false;
+		}
+	}
+
+	// HLS for browsers with no MediaSource at all (older iPhones and iPads),
+	// which play it natively in the video element.
+	function startHLS(camera: string, video: HTMLVideoElement) {
+		if (!video.canPlayType('application/vnd.apple.mpegurl')) {
+			streamErrors[camera] = 'Live video is not supported in this browser';
+			return;
+		}
+		const onError = () => {
+			streamErrors[camera] = 'Stream disconnected';
+		};
+		video.addEventListener('error', onError);
+		video.src = `/api/stream/hls/stream.m3u8?src=${encodeURIComponent(camera)}`;
+		video.play().catch(() => {
+			// autoplay may wait for a tap; the video is muted so it usually won't
+		});
+		cleanups[camera] = () => {
+			video.removeEventListener('error', onError);
+			video.removeAttribute('src');
+			video.load();
+		};
+	}
+
 	function stopStream(camera: string) {
 		if (cleanups[camera]) {
 			cleanups[camera]();
@@ -185,9 +249,6 @@
 		if (websockets[camera]) {
 			websockets[camera]!.close();
 			delete websockets[camera];
-		}
-		if (videoElements[camera]) {
-			videoElements[camera].src = '';
 		}
 	}
 
@@ -201,9 +262,9 @@
 	$effect(() => {
 		const current = cameras;
 		for (const cam of current) {
-			if (!websockets[cam]) startStream(cam);
+			if (!cleanups[cam]) startStream(cam);
 		}
-		for (const cam of Object.keys(websockets)) {
+		for (const cam of Object.keys(cleanups)) {
 			if (!current.includes(cam)) stopStream(cam);
 		}
 	});
@@ -215,7 +276,7 @@
 	});
 
 	onDestroy(() => {
-		for (const cam of Object.keys(websockets)) {
+		for (const cam of Object.keys(cleanups)) {
 			stopStream(cam);
 		}
 	});

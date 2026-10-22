@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -117,6 +118,71 @@ func (h *StreamHandler) ProxyMSE(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	<-done
+}
+
+// hlsPaths are the go2rtc HLS endpoints ProxyHLS forwards, relative to
+// go2rtc's /api/. The entry playlist names the camera; the rest are reached
+// through relative links in it and carry go2rtc's random session id.
+var hlsPaths = map[string]bool{
+	"stream.m3u8":       true,
+	"hls/playlist.m3u8": true,
+	"hls/segment.ts":    true,
+	"hls/init.mp4":      true,
+	"hls/segment.m4s":   true,
+}
+
+var hlsClient = &http.Client{Timeout: 30 * time.Second}
+
+// ProxyHLS handles GET /api/stream/hls/{path...}, forwarding to go2rtc's
+// /api/{path}. It serves live video to browsers with no MediaSource at all
+// (older iPhones and iPads), which play HLS natively. Start at
+// /api/stream/hls/stream.m3u8?src=CAMERA; go2rtc's playlists link to the
+// other paths relatively, so they come back through here too.
+func (h *StreamHandler) ProxyHLS(w http.ResponseWriter, r *http.Request) {
+	path := r.PathValue("path")
+	if !hlsPaths[path] {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	if path == "stream.m3u8" {
+		if cam := q.Get("src"); cam == "" || !allowedCameraSet(r)[cam] {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	} else if q.Get("id") == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+
+	u, err := url.Parse(h.Go2rtcURL)
+	if err != nil {
+		slog.Error("stream: invalid go2rtc url", "error", err)
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/" + path
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+	resp, err := hlsClient.Do(req)
+	if err != nil {
+		slog.Error("stream: go2rtc hls request failed", "path", path, "error", err)
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // buildGo2rtcWSURL converts a go2rtc HTTP base URL to a WebSocket URL.

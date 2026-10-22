@@ -53,6 +53,19 @@ export interface Activity {
 	detail?: string;
 }
 
+export interface ScheduledHold {
+	id: number;
+	gate_id: number;
+	user_id: number;
+	owner: string;
+	start: string;
+	end: string;
+	note: string;
+	status: 'pending' | 'active' | 'done' | 'cancelled' | 'skipped' | 'missed';
+	detail?: string;
+	can_cancel: boolean;
+}
+
 export interface ImportResult {
 	imported: User[];
 	skipped: { username: string; reason: string }[];
@@ -184,6 +197,27 @@ class ApiClient {
 
 	async deleteUser(id: number): Promise<void> {
 		return this.request(`/api/users/${id}`, { method: 'DELETE' });
+	}
+
+	/** Upcoming and in-progress scheduled holds on gates the user can operate. */
+	async getSchedules(): Promise<ScheduledHold[]> {
+		return this.request('/api/schedules');
+	}
+
+	async scheduleHold(data: { gate_id: number; start: Date; end: Date; note: string }): Promise<ScheduledHold> {
+		return this.request('/api/schedules', {
+			method: 'POST',
+			body: JSON.stringify({
+				gate_id: data.gate_id,
+				start: data.start.toISOString(),
+				end: data.end.toISOString(),
+				note: data.note
+			})
+		});
+	}
+
+	async cancelSchedule(id: number): Promise<void> {
+		return this.request(`/api/schedules/${id}`, { method: 'DELETE' });
 	}
 
 	/** Admin: import users from a `mysql -B` dump of the old gate site's users table. */

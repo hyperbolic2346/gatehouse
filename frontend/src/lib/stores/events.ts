@@ -3,16 +3,21 @@ import { api, type Event } from '../api';
 import { user, visibleCameras } from './auth';
 
 export const events = writable<Event[]>([]);
-export const selectedDate = writable<string>(todayString());
+export const selectedDate = writable<string>(toDateString(new Date()));
 export const selectedCamera = writable<string>('');
 export const eventsLoading = writable(false);
 export const eventsError = writable<string | null>(null);
 
-function todayString(): string {
-	const d = new Date();
+/** Local date as YYYYMMDD, the form the events API takes. */
+export function toDateString(d: Date): string {
 	return d.getFullYear().toString() +
 		(d.getMonth() + 1).toString().padStart(2, '0') +
 		d.getDate().toString().padStart(2, '0');
+}
+
+/** Parse YYYYMMDD as a local date. */
+export function fromDateString(s: string): Date {
+	return new Date(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
 }
 
 export async function fetchEvents() {
@@ -50,15 +55,19 @@ export const eventsStore = {
 		);
 	},
 
-	handleDayRollover(date: string) {
-		selectedDate.set(date);
-		fetchEvents();
+	/** At midnight, follow along to the new day if the viewer was on today;
+	 * leave someone browsing an older day where they are. */
+	handleDayRollover() {
+		const today = toDateString(new Date());
+		const yesterday = new Date();
+		yesterday.setDate(yesterday.getDate() - 1);
+		if (get(selectedDate) === toDateString(yesterday)) {
+			selectedDate.set(today);
+			fetchEvents();
+		}
 	}
 };
 
 function formatUnixDate(ts: number): string {
-	const d = new Date(ts * 1000);
-	return d.getFullYear().toString() +
-		(d.getMonth() + 1).toString().padStart(2, '0') +
-		d.getDate().toString().padStart(2, '0');
+	return toDateString(new Date(ts * 1000));
 }

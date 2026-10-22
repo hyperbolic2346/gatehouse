@@ -31,7 +31,7 @@ function handleMessage(msg: WSMessage) {
 			refreshSchedules();
 			break;
 		case 'day_rollover':
-			eventsStore.handleDayRollover((msg.data as { date: string }).date);
+			eventsStore.handleDayRollover();
 			break;
 	}
 }

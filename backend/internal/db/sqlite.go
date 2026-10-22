@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -40,6 +41,31 @@ func (u *User) Name() string {
 		return u.DisplayName
 	}
 	return u.Username
+}
+
+// CanOperateGate reports whether the user may control the given gate. Gate 0
+// is Wilson and gate 1 is Brigman; admins may control every gate.
+func (u *User) CanOperateGate(gateID int) bool {
+	if u.Role == "admin" {
+		return true
+	}
+	switch gateID {
+	case 0:
+		return u.WilsonGate
+	case 1:
+		return u.BrigmanGate
+	default:
+		return false
+	}
+}
+
+// HoldRank orders users for hold priority: a user cannot take over or
+// release a hold placed by someone with a higher rank. Admins outrank everyone.
+func (u *User) HoldRank() int {
+	if u.Role == "admin" {
+		return math.MaxInt
+	}
+	return u.HoldPriority
 }
 
 // HasLegacyPassword reports whether the stored hash is an unsalted md5 hash
@@ -144,7 +170,22 @@ func (d *DB) migrate() error {
 		detail  TEXT NOT NULL DEFAULT ''
 	);
 
-	CREATE INDEX IF NOT EXISTS activity_log_gate ON activity_log (gate_id, id);`
+	CREATE INDEX IF NOT EXISTS activity_log_gate ON activity_log (gate_id, id);
+
+	CREATE TABLE IF NOT EXISTS scheduled_holds (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		gate_id    INTEGER NOT NULL,
+		user_id    INTEGER NOT NULL,
+		owner      TEXT NOT NULL,
+		start_at   TEXT NOT NULL,
+		end_at     TEXT NOT NULL,
+		note       TEXT NOT NULL DEFAULT '',
+		status     TEXT NOT NULL,
+		detail     TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS scheduled_holds_status ON scheduled_holds (status, start_at);`
 
 	if _, err := d.conn.Exec(schema); err != nil {
 		return fmt.Errorf("create tables: %w", err)

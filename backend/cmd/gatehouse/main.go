@@ -98,6 +98,15 @@ func main() {
 	// Create and start HTTP server.
 	srv := server.New(cfg, database, hub, frigateClient, gateCtrl)
 
+	// Start and end scheduled holds (e.g. delivery windows).
+	scheduler := &gate.Scheduler{
+		Op:      &gate.Operator{Gates: gateCtrl, Store: database},
+		Store:   database,
+		Ready:   gateCtrl.Ready,
+		Changed: srv.SchedulesChanged,
+	}
+	go scheduler.Run(ctx)
+
 	go func() {
 		if err := srv.Start(); err != nil {
 			log.Printf("HTTP server stopped: %v", err)

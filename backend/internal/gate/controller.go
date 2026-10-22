@@ -102,6 +102,13 @@ func (c *Controller) SetClient(client mqtt.Client) {
 	c.client = client
 }
 
+// Ready reports whether commands can currently reach the controller.
+func (c *Controller) Ready() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.client != nil && c.client.IsConnected()
+}
+
 // Subscribe registers the MQTT topic subscriptions for gate status updates.
 // Call this after the MQTT client is connected (e.g. in the OnConnect handler).
 func (c *Controller) Subscribe() {

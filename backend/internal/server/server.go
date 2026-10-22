@@ -93,6 +93,12 @@ func (s *Server) Start() error {
 	mux.Handle("POST /api/gates/{id}/hold", authMW(http.HandlerFunc(gatesHandler.Hold)))
 	mux.Handle("POST /api/gates/{id}/release", authMW(http.HandlerFunc(gatesHandler.Release)))
 
+	// Scheduled holds
+	schedulesHandler := &api.SchedulesHandler{DB: s.db, Controller: s.gateCtrl, Changed: s.SchedulesChanged}
+	mux.Handle("GET /api/schedules", authMW(http.HandlerFunc(schedulesHandler.List)))
+	mux.Handle("POST /api/schedules", authMW(http.HandlerFunc(schedulesHandler.Create)))
+	mux.Handle("DELETE /api/schedules/{id}", authMW(http.HandlerFunc(schedulesHandler.Cancel)))
+
 	// Audit log (admin only)
 	activityHandler := &api.ActivityHandler{DB: s.db}
 	mux.Handle("GET /api/activity", authMW(api.AdminOnly(http.HandlerFunc(activityHandler.List))))
@@ -132,6 +138,11 @@ func (s *Server) Start() error {
 
 	log.Printf("HTTP server listening on %s", addr)
 	return s.httpSrv.ListenAndServe()
+}
+
+// SchedulesChanged tells connected clients to refresh their scheduled holds.
+func (s *Server) SchedulesChanged() {
+	s.hub.Broadcast([]byte(`{"type":"schedules_changed"}`))
 }
 
 // Shutdown gracefully shuts down the HTTP server, waiting for active

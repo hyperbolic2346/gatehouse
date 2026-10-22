@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,8 +97,13 @@ func (c *Client) GetCameras() ([]string, error) {
 	return cameras, nil
 }
 
-// GetEvents retrieves detection events from Frigate, optionally filtered by
-// camera and time range. Pass 0 for before or after to omit those filters.
+// EventsPageSize is how many events GetEvents returns at most; callers page
+// backwards with before.
+const EventsPageSize = 50
+
+// GetEvents retrieves detection events from Frigate, newest first, optionally
+// filtered by camera and time range. Pass 0 for before or after to omit those
+// filters. At most EventsPageSize events are returned.
 func (c *Client) GetEvents(camera string, before, after int64) ([]Event, error) {
 	params := url.Values{}
 	if camera != "" {
@@ -109,7 +115,7 @@ func (c *Client) GetEvents(camera string, before, after int64) ([]Event, error) 
 	if after > 0 {
 		params.Set("after", fmt.Sprintf("%d", after))
 	}
-	params.Set("limit", "50")
+	params.Set("limit", strconv.Itoa(EventsPageSize))
 	params.Set("include_thumbnails", "0")
 
 	reqURL := fmt.Sprintf("%s/api/events?%s", c.baseURL, params.Encode())

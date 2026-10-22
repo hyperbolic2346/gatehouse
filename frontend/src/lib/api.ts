@@ -31,6 +31,9 @@ export interface Event {
 	has_snapshot: boolean;
 }
 
+/** Events per page from GET /api/events (the server's Frigate page size). */
+export const EVENTS_PAGE_SIZE = 50;
+
 export interface GateStatus {
 	name: string;
 	id: number;
@@ -130,10 +133,13 @@ class ApiClient {
 		return this.request('/api/cameras');
 	}
 
-	async getEvents(date?: string, camera?: string): Promise<Event[]> {
+	/** One page of a day's events, newest first. Pass the oldest start_time
+	 * already shown as `before` to get the next page. */
+	async getEvents(date?: string, camera?: string, before?: number): Promise<Event[]> {
 		const params = new URLSearchParams();
 		if (date) params.set('date', date);
 		if (camera) params.set('camera', camera);
+		if (before) params.set('before', String(before));
 		return this.request(`/api/events?${params}`);
 	}
 

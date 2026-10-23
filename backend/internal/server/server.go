@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -153,60 +153,64 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)
 }
 
-// spaHandler returns an http.Handler that serves static files from dir.
-// If the requested file does not exist on disk the handler falls back to
-// serving index.html so that client-side routing works.
+// appRoutes are the pages the SvelteKit app renders; each is served
+// index.html and routed client-side.
+var appRoutes = map[string]bool{
+	"/":       true,
+	"/login":  true,
+	"/admin":  true,
+	"/admin/": true,
+}
+
+// spaHandler returns an http.Handler that serves static files from dir and
+// index.html for the app's own pages. Any other path is logged and
+// redirected to the home page, which sends logged-out visitors to /login:
+// neighbours still have bookmarks into the old PHP site (/index.php,
+// /ajax_list.php, /media/...) on this hostname. Missing build assets and
+// unknown /api/ paths stay 404s.
 func spaHandler(dir string) http.Handler {
 	fileServer := http.FileServer(http.Dir(dir))
+	indexFile := filepath.Join(dir, "index.html")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Clean the path to prevent directory traversal.
-		path := filepath.Clean(r.URL.Path)
-		if path == "." {
-			path = "/"
-		}
+		path := filepath.Clean("/" + r.URL.Path)
 
-		// Check if the file exists on disk.
-		fullPath := filepath.Join(dir, path)
-		info, err := os.Stat(fullPath)
-		if err == nil && !info.IsDir() {
+		// Serve real files (but not directory listings).
+		if info, err := os.Stat(filepath.Join(dir, path)); err == nil && !info.IsDir() {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// If the path is a directory, check for index.html inside it.
-		if err == nil && info.IsDir() {
-			indexPath := filepath.Join(fullPath, "index.html")
-			if _, err := os.Stat(indexPath); err == nil {
-				fileServer.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		// For paths that look like static assets (have a file extension),
-		// return 404 rather than the SPA fallback.
-		if ext := filepath.Ext(path); ext != "" && !isHTMLExt(ext) {
-			// Check if it exists in the filesystem at all.
-			if _, err := fs.Stat(os.DirFS(dir), strings.TrimPrefix(path, "/")); err != nil {
+		if appRoutes[path] || appRoutes[r.URL.Path] {
+			if _, err := os.Stat(indexFile); err != nil {
 				http.NotFound(w, r)
 				return
 			}
+			http.ServeFile(w, r, indexFile)
+			return
 		}
 
-		// SPA fallback: serve index.html for all other routes.
-		indexFile := filepath.Join(dir, "index.html")
-		if _, err := os.Stat(indexFile); err != nil {
+		if strings.HasPrefix(path+"/", "/_app/") || strings.HasPrefix(path+"/", "/api/") {
+			logUnknownPath(r, "not found")
 			http.NotFound(w, r)
 			return
 		}
-		http.ServeFile(w, r, indexFile)
+
+		logUnknownPath(r, "redirected to /")
+		http.Redirect(w, r, "/", http.StatusFound)
 	})
 }
 
-// isHTMLExt returns true for extensions that should get SPA fallback.
-func isHTMLExt(ext string) bool {
-	ext = strings.ToLower(ext)
-	return ext == ".html" || ext == ".htm"
+// logUnknownPath records a request for a path the app does not serve, so
+// stale bookmarks and broken links show up in the pod log.
+func logUnknownPath(r *http.Request, outcome string) {
+	ip := r.Header.Get("CF-Connecting-IP")
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	slog.Info("unknown path", "outcome", outcome, "method", r.Method, "uri", r.URL.RequestURI(),
+		"host", r.Host, "ip", ip, "user_agent", r.UserAgent(), "referer", r.Referer())
 }
 
 // corsMiddleware adds CORS headers for development (localhost:5173).
